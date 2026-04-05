@@ -45,7 +45,10 @@ server.py     ← FastAPI 앱만 (StreamingResponse로 토큰 단위 전송)
 ### 벡터스토어 캐시
 `agent.py` 시작 시 `vectorstore/index.faiss` 존재 여부를 확인합니다.
 - **존재**: `FAISS.load_local()`로 즉시 로드 (임베딩 API 호출 없음)
-- **없음**: PDF 파싱 → 임베딩 생성 → `vectorstore.save_local()`로 저장
+- **없음**: PDF 파싱 → 청크 분할(chunk_size=1500, chunk_overlap=150) → 임베딩 생성 → `vectorstore.save_local()`로 저장
+
+Retriever는 `search_kwargs={"k": 6}`으로 쿼리당 6개 청크를 반환합니다.
+청크 파라미터를 변경할 경우 `vectorstore/` 폴더를 삭제하고 재시작해야 반영됩니다.
 
 ### 대화 히스토리
 에이전트에 `MemorySaver` checkpointer가 설정되어 있습니다. 각 세션은 `thread_id`(UUID)로 구분됩니다.
@@ -53,7 +56,10 @@ server.py     ← FastAPI 앱만 (StreamingResponse로 토큰 단위 전송)
 - **웹**: 브라우저 탭 로드 시 `crypto.randomUUID()`로 생성, 모든 요청에 `session_id`로 전달
 
 ### 스트리밍
-`server.py`는 `agent.astream_events(version="v2")`로 이벤트를 구독하고, `on_chat_model_stream` 이벤트의 `AIMessageChunk.content`만 필터링해 `StreamingResponse`로 전송합니다.
+`server.py`는 `agent.astream_events(version="v2")`로 이벤트를 구독하고, `on_chat_model_stream` 이벤트의 `AIMessageChunk.content`만 필터링해 `StreamingResponse`로 전송합니다. `asyncio.timeout(120)`으로 2분 초과 시 자동 종료됩니다.
+
+### 프론트엔드 레이아웃
+`page.tsx`는 `h-screen` + `header / main(flex-1 overflow-y-auto) / footer` 구조입니다. 입력 폼은 항상 footer에 고정됩니다. 메시지 목록은 `id`(UUID) 기반 key를 사용하며, 스크롤은 새 메시지 추가 시에만 실행됩니다(`messages.length` 의존).
 
 ## 기술 스택
 - **LLM**: OpenAI `gpt-5.4-mini` (temperature=0)

@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,19 +34,22 @@ async def chat(req: QuestionRequest):
 
     async def generate():
         try:
-            async for event in agent.astream_events(
-                {"messages": [HumanMessage(content=req.question)]},
-                config=config,
-                version="v2",
-            ):
-                if event["event"] == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"]
-                    if (
-                        isinstance(chunk, AIMessageChunk)
-                        and isinstance(chunk.content, str)
-                        and chunk.content
-                    ):
-                        yield chunk.content
+            async with asyncio.timeout(120):
+                async for event in agent.astream_events(
+                    {"messages": [HumanMessage(content=req.question)]},
+                    config=config,
+                    version="v2",
+                ):
+                    if event["event"] == "on_chat_model_stream":
+                        chunk = event["data"]["chunk"]
+                        if (
+                            isinstance(chunk, AIMessageChunk)
+                            and isinstance(chunk.content, str)
+                            and chunk.content
+                        ):
+                            yield chunk.content
+        except asyncio.TimeoutError:
+            yield "\n[응답 시간이 초과되었습니다.]"
         except Exception as e:
             yield f"\n[오류가 발생했습니다: {str(e)}]"
 

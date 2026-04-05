@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 
 interface Message {
+  id: string;
   question: string;
   answer: string;
 }
@@ -13,19 +14,24 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const sessionId = useRef<string>(crypto.randomUUID());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevCountRef = useRef(0);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (messages.length > prevCountRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      prevCountRef.current = messages.length;
+    }
+  }, [messages.length]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!question.trim() || isLoading) return;
 
     const q = question.trim();
+    const msgId = crypto.randomUUID();
     setQuestion("");
     setIsLoading(true);
-    setMessages((prev) => [...prev, { question: q, answer: "" }]);
+    setMessages((prev) => [...prev, { id: msgId, question: q, answer: "" }]);
 
     try {
       const res = await fetch("/api/chat", {
@@ -36,11 +42,9 @@ export default function Home() {
 
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
-        setMessages((prev) => {
-          const updated = [...prev];
-          updated[updated.length - 1].answer = data.error ?? "오류가 발생했습니다.";
-          return updated;
-        });
+        setMessages((prev) =>
+          prev.map((m) => m.id === msgId ? { ...m, answer: data.error ?? "오류가 발생했습니다." } : m)
+        );
         return;
       }
 
@@ -51,41 +55,37 @@ export default function Home() {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
-        setMessages((prev) => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            answer: updated[updated.length - 1].answer + chunk,
-          };
-          return updated;
-        });
+        setMessages((prev) =>
+          prev.map((m) => m.id === msgId ? { ...m, answer: m.answer + chunk } : m)
+        );
       }
     } catch {
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1].answer =
-          "서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요.";
-        return updated;
-      });
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? { ...m, answer: "서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요." }
+            : m
+        )
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-white text-gray-900">
-      <main className="flex flex-1 flex-col items-center px-4 py-12 gap-8">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold tracking-tight mb-2">IMDB 영화 챗봇</h1>
-          <p className="text-gray-500 text-sm">
-            IMDB Top 250 기반 AI 영화 전문가에게 무엇이든 물어보세요
-          </p>
-        </div>
+    <div className="flex flex-col h-screen bg-white text-gray-900">
+      <header className="shrink-0 text-center px-4 pt-10 pb-4">
+        <h1 className="text-4xl font-bold tracking-tight mb-2">IMDB 영화 챗봇</h1>
+        <p className="text-gray-500 text-sm">
+          IMDB Top 250 기반 AI 영화 전문가에게 무엇이든 물어보세요
+        </p>
+      </header>
 
+      <main className="flex-1 overflow-y-auto px-4 py-4">
         {messages.length > 0 && (
-          <div className="w-full max-w-2xl flex flex-col gap-4">
-            {messages.map((msg, i) => (
-              <div key={i} className="flex flex-col gap-2">
+          <div className="mx-auto w-full max-w-2xl flex flex-col gap-4">
+            {messages.map((msg) => (
+              <div key={msg.id} className="flex flex-col gap-2">
                 <div className="self-end max-w-[80%] px-4 py-3 rounded-2xl bg-blue-600 text-white text-sm">
                   {msg.question}
                 </div>
@@ -103,8 +103,10 @@ export default function Home() {
             <div ref={messagesEndRef} />
           </div>
         )}
+      </main>
 
-        <form onSubmit={handleSubmit} className="w-full max-w-2xl flex gap-2">
+      <footer className="shrink-0 px-4 py-4 bg-white border-t border-gray-100">
+        <form onSubmit={handleSubmit} className="mx-auto w-full max-w-2xl flex gap-2">
           <input
             type="text"
             value={question}
@@ -127,7 +129,7 @@ export default function Home() {
             ) : "전송"}
           </button>
         </form>
-      </main>
+      </footer>
     </div>
   );
 }
