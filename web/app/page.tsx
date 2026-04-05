@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 
 interface Message {
   id: string;
@@ -23,7 +24,7 @@ export default function Home() {
     }
   }, [messages.length]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (!question.trim() || isLoading) return;
 
@@ -90,7 +91,25 @@ export default function Home() {
                   {msg.question}
                 </div>
                 <div className="self-start max-w-[80%] px-4 py-3 rounded-2xl bg-gray-100 text-gray-900 text-sm leading-relaxed min-h-[44px]">
-                  {msg.answer || (
+                  {msg.answer ? (
+                    <ReactMarkdown
+                      components={{
+                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
+                        li: ({ children }) => <li>{children}</li>,
+                        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                        h1: ({ children }) => <h1 className="text-base font-bold mb-1">{children}</h1>,
+                        h2: ({ children }) => <h2 className="text-sm font-bold mb-1">{children}</h2>,
+                        h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+                        code: ({ children }) => <code className="bg-gray-200 rounded px-1 font-mono text-xs">{children}</code>,
+                        blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 text-gray-600 italic">{children}</blockquote>,
+                        hr: () => <hr className="my-2 border-gray-300" />,
+                      }}
+                    >
+                      {msg.answer}
+                    </ReactMarkdown>
+                  ) : (
                     <span className="flex gap-1 items-center">
                       <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
                       <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
