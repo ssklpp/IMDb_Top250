@@ -24,12 +24,12 @@ else:
     print("벡터스토어 생성 중 (최초 1회)...")
     loader = PyMuPDFLoader("imdb_top250.pdf")
     docs = loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     split_documents = text_splitter.split_documents(docs)
     vectorstore = FAISS.from_documents(documents=split_documents, embedding=embeddings)
     vectorstore.save_local(VECTORSTORE_PATH)
 
-retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
+retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 llm = ChatOpenAI(model_name="gpt-5.4-mini", temperature=0)
 
 imdb_tool = create_retriever_tool(

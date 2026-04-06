@@ -21,8 +21,8 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 ## 에이전트 파이프라인
 
 1. FAISS 캐시(`vectorstore/`) 존재 시 로드, 없으면 PDF 파싱 후 생성 및 저장
-   - 청크 분할: chunk_size=1500, chunk_overlap=150
-2. Retriever(k=6), LLM, 도구 초기화
+   - 청크 분할: chunk_size=800, chunk_overlap=100
+2. Retriever(k=8), LLM, 도구 초기화
 3. LangGraph 에이전트 생성 (`MemorySaver`로 대화 히스토리 유지)
 4. 질문마다 `imdb_search` / `web_search` 도구 자동 선택
 
@@ -39,7 +39,7 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 
 ```bash
 # 백엔드
-pip install langchain langchain-community langchain-openai langchain-tavily faiss-cpu pymupdf python-dotenv fastapi uvicorn
+pip install langchain langchain-community langchain-openai langchain-tavily faiss-cpu pymupdf python-dotenv fastapi uvicorn cachetools
 
 # 프론트엔드
 cd web && npm install
@@ -88,6 +88,10 @@ cd web && npm run dev
 - 벡터스토어 캐시로 재시작 시 임베딩 API 호출 없음
 - 대화 히스토리 유지 — "그 영화의 감독은?" 같은 후속 질문 가능
 - 스트리밍 응답 — 토큰 단위로 실시간 표시, 2분 타임아웃 자동 처리
+- **도구 상태 표시** — 에이전트가 IMDB 검색 또는 웹 검색 중일 때 UI에 실시간 표시
+- **응답 캐싱** — 동일 질문 반복 시 TTLCache(1시간)로 API 비용 절감
+- **새 대화 버튼** — 헤더에서 클릭 한 번으로 세션 초기화
+- **복사 버튼** — AI 응답 버블 hover 시 클립보드 복사
 - 마크다운 렌더링 — 제목, 목록, 굵은 글씨, 인라인 코드, 인용구 등 지원
 - PDF에 없는 최신 정보도 웹 검색으로 보완
 - LangSmith로 에이전트 실행 추적 가능
