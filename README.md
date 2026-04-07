@@ -39,7 +39,7 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 
 ```bash
 # 백엔드
-pip install langchain langchain-community langchain-openai langchain-tavily faiss-cpu pymupdf python-dotenv fastapi uvicorn cachetools
+pip install -r requirements.txt
 
 # 프론트엔드
 cd web && npm install
@@ -61,6 +61,22 @@ LANGCHAIN_PROJECT=imdb-rag-chatbot
 - LangSmith API 키 발급: [smith.langchain.com](https://smith.langchain.com)
 
 `web/.env.local`은 기본값(`http://localhost:8000`)으로 설정되어 있으며, 배포 환경에서는 `BACKEND_URL`을 변경하세요.
+
+환경변수 템플릿: `.env.example`, `web/.env.example` 참고
+
+## 배포
+
+Vercel(프론트엔드) + Railway(백엔드) 조합으로 배포합니다.
+
+### Railway (백엔드)
+1. GitHub 레포 연결 → 환경변수 설정 (`.env.example` 참고)
+2. `CORS_ORIGINS`에 Vercel 도메인 설정
+3. Volumes에서 `/app/vectorstore` 마운트 (영구 저장)
+
+### Vercel (프론트엔드)
+1. GitHub 레포 연결 → Root Directory: `web`
+2. Environment Variables: `BACKEND_URL` = Railway 백엔드 URL
+3. 환경변수 변경 시 Redeploy 필요
 
 ## 실행 방법
 

@@ -85,7 +85,7 @@ AI 응답 버블에는:
 - **PDF Loader**: PyMuPDF (`langchain_community.document_loaders.PyMuPDFLoader`)
 - **Web Search**: Tavily (`langchain_tavily.TavilySearch`, max_results=5)
 - **Cache**: `cachetools.TTLCache` (maxsize=256, TTL 1시간)
-- **API 서버**: FastAPI + uvicorn, CORS는 `localhost:3000`만 허용
+- **API 서버**: FastAPI + uvicorn, CORS는 `CORS_ORIGINS` 환경변수로 설정 (기본값: `http://localhost:3000`)
 - **Frontend**: Next.js 16 (App Router, TypeScript, Tailwind CSS v4)
 - **Markdown**: `react-markdown`
 
@@ -97,16 +97,32 @@ Next.js 16은 이전 버전과 API, 파일 구조가 다릅니다. `web/` 코드
 - 모르는 내용은 모른다고 답변
 
 ## 환경 설정
-루트 `.env`:
+루트 `.env` (`.env.example` 참고):
 ```
 OPENAI_API_KEY=your_openai_api_key
 TAVILY_API_KEY=your_tavily_api_key
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=your_langsmith_api_key
 LANGCHAIN_PROJECT=imdb-rag-chatbot
+
+# 프로덕션 배포 시: Vercel 도메인으로 변경
+CORS_ORIGINS=http://localhost:3000
 ```
 
-`web/.env.local`:
+`web/.env.local` (`web/.env.example` 참고):
 ```
 BACKEND_URL=http://localhost:8000
 ```
+
+## 배포 (Vercel + Railway)
+
+### Railway (백엔드)
+- `railway.toml`에 시작 명령 및 헬스체크 설정 포함
+- 환경변수: `.env.example` 참고, `CORS_ORIGINS`는 Vercel 도메인으로 설정
+- 볼륨 마운트: `/app/vectorstore` (vectorstore 영구 저장)
+- 백엔드 URL: `https://imdbtop250-production.up.railway.app`
+
+### Vercel (프론트엔드)
+- Root Directory: `web`
+- 환경변수: `BACKEND_URL` = Railway 백엔드 URL
+- `web/.env.local`은 로컬 전용, Vercel에는 대시보드에서 직접 설정
