@@ -1,0 +1,10 @@
+fastapi==0.135.3
+uvicorn==0.43.0
+langchain==1.0.2
+langchain-community==0.4
+langchain-openai==1.1.12
+langchain-tavily==0.2.17
+faiss-cpu==1.12.0
+PyMuPDF==1.27.2.2
+python-dotenv==1.1.1
+cachetools==7.0.5

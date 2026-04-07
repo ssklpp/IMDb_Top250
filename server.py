@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 import uuid
 from cachetools import TTLCache
 from fastapi import FastAPI
@@ -11,9 +12,11 @@ from agent import agent
 
 app = FastAPI()
 
+_cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
