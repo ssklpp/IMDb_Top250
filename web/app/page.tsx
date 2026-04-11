@@ -26,6 +26,14 @@ export default function Home() {
     }
   }, [messages.length]);
 
+  useEffect(() => {
+    const handleResize = () => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+    };
+    window.visualViewport?.addEventListener("resize", handleResize);
+    return () => window.visualViewport?.removeEventListener("resize", handleResize);
+  }, []);
+
   const handleNewConversation = () => {
     setMessages([]);
     setQuestion("");
@@ -122,11 +130,11 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-white text-gray-900">
+    <div className="flex flex-col h-screen h-[100dvh] bg-white text-gray-900">
       <header className="shrink-0 flex items-center px-4 pt-6 pb-4">
         <div className="flex-1" />
         <div className="flex flex-col items-center">
-          <h1 className="text-4xl font-bold tracking-tight mb-1">영화 챗봇</h1>
+          <h1 className="text-2xl sm:text-4xl font-bold tracking-tight mb-1">영화 챗봇</h1>
           <p className="text-gray-500 text-sm">
             AI 영화 전문가에게 무엇이든 물어보세요
           </p>
@@ -135,7 +143,7 @@ export default function Home() {
           <button
             onClick={handleNewConversation}
             disabled={isLoading}
-            className="px-3 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-40 transition-colors"
+            className="min-h-[44px] min-w-[44px] px-3 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-40 transition-colors"
           >
             새 대화
           </button>
@@ -148,12 +156,12 @@ export default function Home() {
             {messages.map((msg) => (
               <div key={msg.id} className="flex flex-col gap-2">
                 {/* 사용자 질문 */}
-                <div className="self-end max-w-[80%] px-4 py-3 rounded-2xl bg-blue-600 text-white text-sm">
+                <div className="self-end max-w-[85%] sm:max-w-[80%] px-4 py-3 rounded-2xl bg-blue-600 text-white text-sm">
                   {msg.question}
                 </div>
 
                 {/* AI 응답 */}
-                <div className="self-start max-w-[80%] relative group">
+                <div className="self-start max-w-[85%] sm:max-w-[80%] relative group">
                   <div className="px-4 py-3 rounded-2xl bg-gray-100 text-gray-900 text-sm leading-relaxed min-h-[44px]">
                     {/* 도구 상태 표시 */}
                     {msg.toolStatus && (
@@ -197,7 +205,7 @@ export default function Home() {
                   {msg.answer && (
                     <button
                       onClick={() => handleCopy(msg.id, msg.answer)}
-                      className="absolute -bottom-6 right-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded"
+                      className="absolute -bottom-6 right-0 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded"
                       title="복사"
                     >
                       {copiedId === msg.id ? (
@@ -226,19 +234,19 @@ export default function Home() {
         )}
       </main>
 
-      <footer className="shrink-0 px-4 py-4 bg-white border-t border-gray-100">
+      <footer className="shrink-0 px-4 py-3 sm:py-4 bg-white border-t border-gray-100">
         <form onSubmit={handleSubmit} className="mx-auto w-full max-w-2xl flex gap-2">
           <input
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="영화에 대해 질문해보세요..."
-            className="flex-1 px-4 py-3 rounded-xl border border-gray-300 bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+            className="flex-1 px-4 py-2 sm:py-3 text-base sm:text-sm rounded-xl border border-gray-300 bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
           />
           <button
             type="submit"
             disabled={!question.trim() || isLoading}
-            className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-medium transition-colors disabled:cursor-not-allowed min-w-[72px]"
+            className="px-5 py-2 sm:py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-medium transition-colors disabled:cursor-not-allowed min-w-[72px]"
           >
             {isLoading ? (
               <span className="flex items-center justify-center">
