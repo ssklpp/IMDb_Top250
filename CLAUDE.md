@@ -124,6 +124,11 @@ BACKEND_URL=http://localhost:8000
 - 볼륨 마운트: `/app/vectorstore` (vectorstore 영구 저장)
 - 백엔드 URL: `https://imdbtop250-production.up.railway.app`
 
+#### Railway 배포 주의사항
+- **`requests`를 requirements.txt에 직접 명시하지 말 것**: `langchain-community`가 `requests>=2.32.5`를 요구하므로 버전을 고정하면 의존성 충돌이 발생한다. `requests`는 transitive dependency로 자동 설치된다.
+- **빌드 실패 시 Active 배포는 유지됨**: 새 빌드가 실패해도 이전 버전이 계속 Active 상태로 서비스된다. Deployments 탭에서 각 배포의 커밋 해시를 확인해 실제로 어떤 버전이 빌드되었는지 확인할 것.
+- **캐시로 인해 최신 커밋이 빌드되지 않을 경우**: Deployments 탭에서 실패한 배포를 Redeploy하면 그 커밋 기준으로 재시도한다. 최신 커밋으로 빌드하려면 GitHub push로 새 배포를 트리거해야 한다.
+
 ### Vercel (프론트엔드)
 - Root Directory: `web`
 - 환경변수: `BACKEND_URL` = Railway 백엔드 URL

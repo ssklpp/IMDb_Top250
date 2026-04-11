@@ -82,6 +82,8 @@ Vercel(프론트엔드) + Railway(백엔드) 조합으로 배포합니다.
 2. `CORS_ORIGINS`에 Vercel 도메인 설정
 3. Volumes에서 `/app/vectorstore` 마운트 (영구 저장)
 
+> **주의**: `requests`를 `requirements.txt`에 직접 명시하지 마세요. `langchain-community`의 transitive dependency로 자동 설치되며, 버전을 고정하면 의존성 충돌이 발생합니다.
+
 ### Vercel (프론트엔드)
 1. GitHub 레포 연결 → Root Directory: `web`
 2. Environment Variables: `BACKEND_URL` = Railway 백엔드 URL
