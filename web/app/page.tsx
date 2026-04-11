@@ -86,8 +86,9 @@ export default function Home() {
           } else if (payload.startsWith("tool:")) {
             const toolName = payload.slice(5);
             const label =
-              toolName === "imdb_search" ? "IMDB Top 250 검색 중..." :
-              toolName === "web_search"  ? "웹 검색 중..." :
+              toolName === "imdb_search"  ? "IMDB Top 250 검색 중..." :
+              toolName === "kobis_search" ? "한국 개봉 영화 검색 중..." :
+              toolName === "web_search"   ? "웹 검색 중..." :
               `${toolName} 실행 중...`;
             setMessages((prev) =>
               prev.map((m) => m.id === msgId ? { ...m, toolStatus: label } : m)
@@ -125,9 +126,9 @@ export default function Home() {
       <header className="shrink-0 flex items-center px-4 pt-6 pb-4">
         <div className="flex-1" />
         <div className="flex flex-col items-center">
-          <h1 className="text-4xl font-bold tracking-tight mb-1">IMDB 영화 챗봇</h1>
+          <h1 className="text-4xl font-bold tracking-tight mb-1">영화 챗봇</h1>
           <p className="text-gray-500 text-sm">
-            IMDB Top 250 기반 AI 영화 전문가에게 무엇이든 물어보세요
+            AI 영화 전문가에게 무엇이든 물어보세요
           </p>
         </div>
         <div className="flex-1 flex justify-end">

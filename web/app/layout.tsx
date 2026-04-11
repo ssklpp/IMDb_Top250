@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "IMDB 영화 챗봇",
-  description: "IMDB Top 250 기반 AI 영화 전문가 챗봇",
+  title: "영화 챗봇",
+  description: "AI 영화 전문가 챗봇",
 };
 
 export default function RootLayout({

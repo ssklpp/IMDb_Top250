@@ -1,6 +1,6 @@
 # IMDB Top 250 AI 영화 챗봇
 
-IMDB Top 250 영화 PDF 검색(RAG)과 Tavily 웹 검색을 결합한 LangGraph 에이전트 기반 영화 전문가 챗봇입니다.  
+IMDB Top 250 영화 PDF 검색(RAG), KOBIS 한국 영화 데이터베이스, Tavily 웹 검색을 결합한 LangGraph 에이전트 기반 영화 전문가 챗봇입니다.  
 FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니다.
 
 ## 기술 스택
@@ -11,6 +11,7 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 - **Vector Store**: FAISS (로컬 캐시, 최초 1회 생성 후 재사용)
 - **Framework**: LangChain + LangGraph
 - **PDF Loader**: PyMuPDF
+- **Korean Movie DB**: KOBIS (영화관입장권통합전산망) Open API
 - **Web Search**: Tavily
 - **API 서버**: FastAPI + uvicorn (스트리밍 응답)
 
@@ -24,16 +25,22 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
    - 청크 분할: chunk_size=800, chunk_overlap=100
 2. Retriever(k=8), LLM, 도구 초기화
 3. LangGraph 에이전트 생성 (`MemorySaver`로 대화 히스토리 유지)
-4. 질문마다 `imdb_search` / `web_search` 도구 자동 선택
+4. 질문마다 `imdb_search` / `kobis_search` / `web_search` 도구 자동 선택
 
 ## 도구 동작 방식
 
 | 도구 | 용도 |
 |------|------|
 | `imdb_search` | IMDB Top 250 PDF에서 영화 제목, 감독, 출연진, 평점 등 검색 |
-| `web_search` | PDF에 없는 신작, 박스오피스, 최신 수상 내역 등 웹 검색 |
+| `kobis_search` | KOBIS API로 한국 개봉작, 일별/주간 박스오피스 검색 |
+| `web_search` | 위 두 도구로 충분하지 않을 때 인터넷 검색 (해외 신작, 수상 내역 등) |
 
 에이전트가 질문을 분석해 어떤 도구를 사용할지 자동으로 판단합니다.
+
+`kobis_search`는 세 가지 모드를 지원합니다:
+- `movie`: 영화 제목으로 국내 개봉 정보 검색
+- `daily`: 특정 날짜(YYYYMMDD)의 일별 박스오피스 Top 10
+- `weekly`: 특정 주의 주간 박스오피스 Top 10
 
 ## 설치 방법
 
@@ -52,12 +59,14 @@ cd web && npm install
 ```
 OPENAI_API_KEY=your_openai_api_key
 TAVILY_API_KEY=your_tavily_api_key
+KOBIS_API_KEY=your_kobis_api_key
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=your_langsmith_api_key
 LANGCHAIN_PROJECT=imdb-rag-chatbot
 ```
 
 - Tavily API 키 발급: [app.tavily.com](https://app.tavily.com) (무료 플랜: 월 1,000회)
+- KOBIS API 키 발급: [kobis.or.kr](https://www.kobis.or.kr) → 마이페이지 → 오픈API → 키 발급/관리 (무료, 1,000 요청/일)
 - LangSmith API 키 발급: [smith.langchain.com](https://smith.langchain.com)
 
 `web/.env.local`은 기본값(`http://localhost:8000`)으로 설정되어 있으며, 배포 환경에서는 `BACKEND_URL`을 변경하세요.
@@ -104,7 +113,7 @@ cd web && npm run dev
 - 벡터스토어 캐시로 재시작 시 임베딩 API 호출 없음
 - 대화 히스토리 유지 — "그 영화의 감독은?" 같은 후속 질문 가능
 - 스트리밍 응답 — 토큰 단위로 실시간 표시, 2분 타임아웃 자동 처리
-- **도구 상태 표시** — 에이전트가 IMDB 검색 또는 웹 검색 중일 때 UI에 실시간 표시
+- **도구 상태 표시** — 에이전트가 IMDB 검색 / 한국 개봉 영화 검색 / 웹 검색 중일 때 UI에 실시간 표시
 - **응답 캐싱** — 동일 질문 반복 시 TTLCache(1시간)로 API 비용 절감
 - **새 대화 버튼** — 헤더에서 클릭 한 번으로 세션 초기화
 - **복사 버튼** — AI 응답 버블 hover 시 클립보드 복사
