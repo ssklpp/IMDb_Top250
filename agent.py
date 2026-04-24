@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import os
@@ -46,8 +47,14 @@ web_tool = TavilySearch(
     description="인터넷에서 최신 영화 정보를 검색합니다. PDF에 없는 신작, 박스오피스, 최신 수상 내역 등을 찾을 때 사용하세요.",
 )
 
+
 @tool
-def kobis_search(query: str, open_start_dt: str = "", open_end_dt: str = "", search_type: str = "movie") -> str:
+def kobis_search(
+    query: str,
+    open_start_dt: str = "",
+    open_end_dt: str = "",
+    search_type: str = "movie",
+) -> str:
     """한국 영화관입장권통합전산망(KOBIS)에서 한국 개봉 영화 정보를 검색합니다.
     한국 박스오피스, 한국 개봉작, 국내 상영 영화, 일별/주간 박스오피스를 찾을 때 사용하세요.
     query: 영화 제목 또는 날짜(YYYYMMDD 형식, 박스오피스 조회 시).
@@ -117,8 +124,12 @@ def kobis_search(query: str, open_start_dt: str = "", open_end_dt: str = "", sea
                 open_dt = m.get("openDt", "")
                 if len(open_dt) == 8:
                     open_dt = f"{open_dt[:4]}-{open_dt[4:6]}-{open_dt[6:]}"
-                directors = ", ".join(d.get("peopleNm", "") for d in m.get("directors", []))
-                actors = ", ".join(a.get("peopleNm", "") for a in m.get("actors", [])[:3])
+                directors = ", ".join(
+                    d.get("peopleNm", "") for d in m.get("directors", [])
+                )
+                actors = ", ".join(
+                    a.get("peopleNm", "") for a in m.get("actors", [])[:3]
+                )
                 entry = f"- 제목: {m.get('movieNm', '')}"
                 if m.get("movieNmEn"):
                     entry += f" ({m['movieNmEn']})"
@@ -137,6 +148,7 @@ def kobis_search(query: str, open_start_dt: str = "", open_end_dt: str = "", sea
 
     except requests.RequestException as e:
         return f"KOBIS API 호출 실패: {e}"
+
 
 SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 도구 선택 기준:

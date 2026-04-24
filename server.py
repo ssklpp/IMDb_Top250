@@ -3,10 +3,13 @@ import hashlib
 import os
 import uuid
 from cachetools import TTLCache
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from langchain_core.messages import HumanMessage, AIMessageChunk
 from agent import agent
 
@@ -20,6 +23,10 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # 응답 캐시: 최대 256개, TTL 1시간
 _response_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
@@ -36,7 +43,8 @@ async def health():
 
 
 @app.post("/api/chat")
-async def chat(req: QuestionRequest):
+@limiter.limit("10/minute")
+async def chat(request: Request, req: QuestionRequest):
     session_was_new = req.session_id is None
     session_id = req.session_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": session_id}}
@@ -84,9 +92,9 @@ async def chat(req: QuestionRequest):
                             yield chunk.content
 
         except asyncio.TimeoutError:
-            yield "\n[응답 시간이 초과되었습니다.]"
-        except Exception as e:
-            yield f"\n[오류가 발생했습니다: {str(e)}]"
+            yield "\x1ferror:응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.\n"
+        except Exception:
+            yield "\x1ferror:오류가 발생했습니다. 잠시 후 다시 시도해주세요.\n"
         else:
             # 정상 완료 시에만 캐시 저장 (새 세션이고 응답이 있을 때)
             if session_was_new and buffer:
