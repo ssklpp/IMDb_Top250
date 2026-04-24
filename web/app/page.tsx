@@ -14,7 +14,7 @@ interface Message {
 
 const EXAMPLE_QUESTIONS = [
   "IMDB Top 250 평점 1위 영화는?",
-  "오늘 한국 박스오피스 1위는?",
+  "어제 한국 박스오피스 1위는?",
   "크리스토퍼 놀란 감독 영화 추천해줘",
   "인터스텔라에 대해 설명해줘",
 ];
