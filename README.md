@@ -1,5 +1,7 @@
 # IMDB Top 250 AI 영화 챗봇
 
+https://im-db-top250.vercel.app/
+
 IMDB Top 250 영화 PDF 검색(RAG), KOBIS 한국 영화 데이터베이스, Tavily 웹 검색을 결합한 LangGraph 에이전트 기반 영화 전문가 챗봇입니다.  
 FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니다.
 
