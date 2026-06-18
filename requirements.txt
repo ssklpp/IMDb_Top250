@@ -9,3 +9,5 @@ PyMuPDF==1.27.2.2
 python-dotenv==1.1.1
 cachetools==7.0.5
 slowapi==0.1.9
+structlog==25.1.0
+tenacity==9.0.0

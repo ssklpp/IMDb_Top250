@@ -1,0 +1,82 @@
+[
+  {
+    "id": "imdb-001",
+    "question": "쇼생크 탈출의 감독은 누구야?",
+    "expected_tools": ["imdb_search"],
+    "expected_keywords": ["프랭크", "다라본트"],
+    "expected_keywords_any": true,
+    "rubric": "쇼생크 탈출(The Shawshank Redemption)의 감독 프랭크 다라본트(Frank Darabont)를 언급해야 한다."
+  },
+  {
+    "id": "imdb-002",
+    "question": "IMDB Top 250에서 평점이 가장 높은 영화는?",
+    "expected_tools": ["imdb_search"],
+    "expected_keywords": ["쇼생크", "Shawshank"],
+    "expected_keywords_any": true,
+    "rubric": "1위 영화인 '쇼생크 탈출' 또는 'The Shawshank Redemption'을 명시해야 한다."
+  },
+  {
+    "id": "imdb-003",
+    "question": "대부 시리즈에 대해 알려줘",
+    "expected_tools": ["imdb_search"],
+    "expected_keywords": ["대부", "Godfather", "코폴라"],
+    "expected_keywords_any": true,
+    "rubric": "대부(The Godfather) 시리즈와 감독(프란시스 포드 코폴라)을 언급해야 한다."
+  },
+  {
+    "id": "kobis-001",
+    "question": "2024년에 개봉한 한국 영화 '서울의 봄'에 대해 알려줘",
+    "expected_tools": ["kobis_search"],
+    "expected_keywords": ["서울의 봄", "김성수", "황정민"],
+    "expected_keywords_any": true,
+    "rubric": "서울의 봄 영화 정보(감독, 출연진, 또는 개봉 정보 중 하나 이상)를 제공해야 한다."
+  },
+  {
+    "id": "kobis-002",
+    "question": "20250101 일별 박스오피스 1위는?",
+    "expected_tools": ["kobis_search"],
+    "expected_keywords": ["1위", "박스오피스"],
+    "expected_keywords_any": true,
+    "rubric": "지정된 날짜의 일별 박스오피스 1위 영화를 답변에 포함해야 한다. 데이터가 없으면 '없습니다'로 답해도 OK."
+  },
+  {
+    "id": "web-001",
+    "question": "2025년 아카데미 작품상 수상작은?",
+    "expected_tools": ["web_search"],
+    "expected_keywords": ["아카데미", "작품상", "2025"],
+    "expected_keywords_any": true,
+    "rubric": "2025년 아카데미 작품상 수상작을 답변하거나, 모른다면 솔직히 모른다고 답해야 한다."
+  },
+  {
+    "id": "refusal-001",
+    "question": "오늘 점심 메뉴 추천해줘",
+    "expected_tools": [],
+    "expected_keywords": ["영화"],
+    "expected_keywords_any": true,
+    "rubric": "영화 전문 챗봇임을 알리고 영화 외 주제는 답변하지 않거나 영화 관련 질문을 유도해야 한다."
+  },
+  {
+    "id": "ambiguous-001",
+    "question": "그 영화 어땠어?",
+    "expected_tools": [],
+    "expected_keywords": ["어떤", "무엇", "구체"],
+    "expected_keywords_any": true,
+    "rubric": "모호한 질문에 대해 구체적인 영화 제목을 되묻거나 명확화를 요청해야 한다."
+  },
+  {
+    "id": "schema-001",
+    "question": "잘못된 날짜인 99999999의 박스오피스를 알려줘",
+    "expected_tools": ["kobis_search"],
+    "expected_keywords": ["없", "올바르", "유효"],
+    "expected_keywords_any": true,
+    "rubric": "유효하지 않은 날짜에 대해 데이터 없음 또는 잘못된 입력을 우아하게 처리해야 한다."
+  },
+  {
+    "id": "korean-imdb-001",
+    "question": "기생충 영화의 감독은?",
+    "expected_tools": ["imdb_search", "kobis_search", "web_search"],
+    "expected_keywords": ["봉준호"],
+    "expected_keywords_any": true,
+    "rubric": "기생충(Parasite)의 감독 봉준호를 답변해야 한다. 어떤 도구를 써도 OK."
+  }
+]

@@ -10,6 +10,8 @@ interface Message {
   answer: string;
   toolStatus?: string | null;
   isError?: boolean;
+  errorCode?: string | null;
+  retryable?: boolean;
 }
 
 const EXAMPLE_QUESTIONS = [
@@ -18,6 +20,33 @@ const EXAMPLE_QUESTIONS = [
   "크리스토퍼 놀란 감독 영화 추천해줘",
   "인터스텔라에 대해 설명해줘",
 ];
+
+const RETRYABLE_CODES = new Set([
+  "TIMEOUT",
+  "INTERNAL",
+  "BACKEND_UNREACHABLE",
+  "BACKEND_ERROR",
+  "NETWORK",
+]);
+
+function errorLabel(code: string | null | undefined, fallback: string): string {
+  switch (code) {
+    case "TIMEOUT":
+      return "⏱ 응답 시간 초과: " + fallback;
+    case "RATE_LIMIT":
+      return "🚦 " + fallback;
+    case "BACKEND_UNREACHABLE":
+      return "🔌 " + fallback;
+    case "BACKEND_ERROR":
+      return "⚠ " + fallback;
+    case "INTERNAL":
+      return "⚠ " + fallback;
+    case "NETWORK":
+      return "🌐 " + fallback;
+    default:
+      return fallback;
+  }
+}
 
 export default function Home() {
   const [question, setQuestion] = useState("");
@@ -61,13 +90,32 @@ export default function Home() {
     }
   };
 
-  const submitQuestion = async (q: string) => {
-    if (!q.trim() || isLoading) return;
+  const setError = (msgId: string, code: string, message: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId
+          ? {
+              ...m,
+              isError: true,
+              answer: errorLabel(code, message),
+              errorCode: code,
+              retryable: RETRYABLE_CODES.has(code),
+              toolStatus: null,
+            }
+          : m
+      )
+    );
+  };
 
-    const msgId = crypto.randomUUID();
-    setQuestion("");
+  const runRequest = async (msgId: string, q: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId
+          ? { ...m, answer: "", isError: false, errorCode: null, retryable: false, toolStatus: null }
+          : m
+      )
+    );
     setIsLoading(true);
-    setMessages((prev) => [...prev, { id: msgId, question: q, answer: "", toolStatus: null }]);
 
     try {
       const res = await fetch("/api/chat", {
@@ -78,9 +126,7 @@ export default function Home() {
 
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
-        setMessages((prev) =>
-          prev.map((m) => m.id === msgId ? { ...m, isError: true, answer: data.error ?? "오류가 발생했습니다." } : m)
-        );
+        setError(msgId, data.code ?? "BACKEND_ERROR", data.error ?? "오류가 발생했습니다.");
         return;
       }
 
@@ -109,10 +155,11 @@ export default function Home() {
               prev.map((m) => m.id === msgId ? { ...m, toolStatus: label } : m)
             );
           } else if (payload.startsWith("error:")) {
-            const errorMsg = payload.slice(6) || "오류가 발생했습니다.";
-            setMessages((prev) =>
-              prev.map((m) => m.id === msgId ? { ...m, isError: true, answer: errorMsg, toolStatus: null } : m)
-            );
+            const raw = payload.slice(6);
+            const sep = raw.indexOf("|");
+            const code = sep === -1 ? "INTERNAL" : raw.slice(0, sep);
+            const message = sep === -1 ? raw || "오류가 발생했습니다." : raw.slice(sep + 1);
+            setError(msgId, code, message);
           }
           return "";
         });
@@ -128,16 +175,23 @@ export default function Home() {
         prev.map((m) => m.id === msgId ? { ...m, toolStatus: null } : m)
       );
     } catch {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === msgId
-            ? { ...m, isError: true, answer: "서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요." }
-            : m
-        )
-      );
+      setError(msgId, "NETWORK", "서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요.");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const submitQuestion = async (q: string) => {
+    if (!q.trim() || isLoading) return;
+    const msgId = crypto.randomUUID();
+    setQuestion("");
+    setMessages((prev) => [...prev, { id: msgId, question: q, answer: "", toolStatus: null }]);
+    await runRequest(msgId, q);
+  };
+
+  const handleRetry = async (msg: Message) => {
+    if (isLoading) return;
+    await runRequest(msg.id, msg.question);
   };
 
   const handleSubmit = (e: React.SyntheticEvent) => {
@@ -226,23 +280,38 @@ export default function Home() {
                     )}
 
                     {msg.answer ? (
-                      <ReactMarkdown
-                        components={{
-                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                          ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
-                          ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
-                          li: ({ children }) => <li>{children}</li>,
-                          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                          h1: ({ children }) => <h1 className="text-base font-bold mb-1">{children}</h1>,
-                          h2: ({ children }) => <h2 className="text-sm font-bold mb-1">{children}</h2>,
-                          h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
-                          code: ({ children }) => <code className="bg-gray-200 dark:bg-gray-700 rounded px-1 font-mono text-xs">{children}</code>,
-                          blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 text-gray-600 dark:text-gray-300 italic">{children}</blockquote>,
-                          hr: () => <hr className="my-2 border-gray-300 dark:border-gray-600" />,
-                        }}
-                      >
-                        {msg.answer}
-                      </ReactMarkdown>
+                      msg.isError ? (
+                        <div className="flex flex-col gap-2">
+                          <span>{msg.answer}</span>
+                          {msg.retryable && (
+                            <button
+                              onClick={() => handleRetry(msg)}
+                              disabled={isLoading}
+                              className="self-start text-xs px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-900/50 hover:bg-red-200 dark:hover:bg-red-900/70 text-red-700 dark:text-red-200 disabled:opacity-40 transition-colors"
+                            >
+                              다시 시도
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <ReactMarkdown
+                          components={{
+                            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                            ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
+                            li: ({ children }) => <li>{children}</li>,
+                            strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                            h1: ({ children }) => <h1 className="text-base font-bold mb-1">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-sm font-bold mb-1">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+                            code: ({ children }) => <code className="bg-gray-200 dark:bg-gray-700 rounded px-1 font-mono text-xs">{children}</code>,
+                            blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 text-gray-600 dark:text-gray-300 italic">{children}</blockquote>,
+                            hr: () => <hr className="my-2 border-gray-300 dark:border-gray-600" />,
+                          }}
+                        >
+                          {msg.answer}
+                        </ReactMarkdown>
+                      )
                     ) : (
                       !msg.toolStatus && (
                         <span className="flex gap-1 items-center">

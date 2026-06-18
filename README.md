@@ -17,6 +17,10 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 - **Web Search**: Tavily
 - **API 서버**: FastAPI + uvicorn (스트리밍 응답)
 - **Rate Limiting**: slowapi (IP당 분당 10회)
+- **Tool Validation**: Pydantic 스키마 + Literal 타입 (도구 인자 검증)
+- **Retry**: tenacity (외부 API 호출 지수 백오프 재시도)
+- **Logging**: structlog (JSON 구조화 로그 + session_id/request_id 추적)
+- **Evals**: 골든 데이터셋 + LLM-as-judge (회귀 테스트)
 
 ### 프론트엔드
 - **Framework**: Next.js 16 (App Router, TypeScript)
@@ -67,6 +71,10 @@ KOBIS_API_KEY=your_kobis_api_key
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=your_langsmith_api_key
 LANGCHAIN_PROJECT=imdb-rag-chatbot
+
+# 로깅 (옵션)
+LOG_LEVEL=INFO          # DEBUG/INFO/WARNING/ERROR
+LOG_FORMAT=json         # json(프로덕션) / console(개발용 컬러 출력)
 ```
 
 - Tavily API 키 발급: [app.tavily.com](https://app.tavily.com) (무료 플랜: 월 1,000회)
@@ -113,14 +121,29 @@ cd web && npm run dev
 ```
 브라우저에서 `http://localhost:3000` 접속
 
+### 평가 실행 (회귀 테스트)
+```bash
+# 도구/키워드 검증만 (빠름, OpenAI 비용 0)
+python -m tests.evals.run_evals --skip-judge
+
+# LLM-as-judge 포함 (OpenAI 비용 발생)
+python -m tests.evals.run_evals
+```
+프롬프트/모델/도구 변경 후 회귀 점검에 사용. 종료 코드 0이면 전체 통과.
+
 ## 특징
 
 - 답변은 **한국어**로 출력, 모르는 내용은 모른다고 답변
 - 벡터스토어 캐시로 재시작 시 임베딩 API 호출 없음
 - 대화 히스토리 유지 — "그 영화의 감독은?" 같은 후속 질문 가능
 - 스트리밍 응답 — 토큰 단위로 실시간 표시, 2분 타임아웃 자동 처리
-- **스트리밍 에러 복구** — 타임아웃/오류 발생 시 빨간 버블로 사용자에게 안내
+- **에러 분류 + 다시 시도 버튼** — TIMEOUT/RATE_LIMIT/BACKEND_UNREACHABLE/INTERNAL/NETWORK 등 코드별 아이콘과 메시지, 재시도 가능한 에러에는 버튼 표시
+- **도구 입력 검증** — Pydantic 스키마로 `kobis_search` 인자 검증, 잘못된 값 시 LLM이 자가 정정 후 재호출
+- **외부 API 자동 재시도** — KOBIS 호출 실패 시 tenacity로 최대 3회 지수 백오프 재시도, 영구 실패 시 `[TOOL_ERROR code=...]` 표준 포맷으로 LLM에 반환 → web_search 등으로 폴백 유도
 - **도구 상태 표시** — 에이전트가 IMDB 검색 / 한국 개봉 영화 검색 / 웹 검색 중일 때 UI에 실시간 표시
+- **구조화 로깅** — structlog 기반 JSON 로그, 모든 이벤트에 `session_id`/`request_id` 자동 첨부 (`LOG_FORMAT=console`로 개발용 컬러 출력 가능)
+- **응답 헤더 추적** — `X-Request-Id`, `X-Session-Id`, `X-Cache`(HIT/MISS) 헤더로 요청 추적 가능
+- **회귀 평가 (Evals)** — 10개 골든 데이터셋 + 도구 호출 검증 + 키워드 매칭 + LLM-as-judge 채점, CI 통합 가능
 - **응답 캐싱** — 동일 질문 반복 시 TTLCache(1시간)로 API 비용 절감
 - **레이트 리미팅** — IP당 분당 10회 제한, 초과 시 429 응답
 - **예시 질문** — 빈 화면에 클릭 가능한 예시 질문 4개 표시
