@@ -23,6 +23,11 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Windows 기본 콘솔(cp949)에서 ✓/✗ 출력 시 UnicodeEncodeError가 나므로 UTF-8로 전환
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # 프로젝트 루트를 sys.path에 추가하여 agent 모듈 import 가능하게 함
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))

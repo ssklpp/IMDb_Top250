@@ -40,6 +40,30 @@
     "rubric": "지정된 날짜의 일별 박스오피스 1위 영화를 답변에 포함해야 한다. 데이터가 없으면 '없습니다'로 답해도 OK."
   },
   {
+    "id": "kobis-003",
+    "question": "영화 기생충의 관람등급이랑 상영시간 알려줘",
+    "expected_tools": ["kobis_search"],
+    "expected_keywords": ["15세", "131"],
+    "expected_keywords_any": true,
+    "rubric": "기생충의 관람등급(15세이상관람가) 또는 상영시간(131분) 중 하나 이상을 정확히 제시해야 한다. KOBIS 상세정보 기반이어야 하며 추측이면 안 된다."
+  },
+  {
+    "id": "kobis-004",
+    "question": "영화 '서울의 봄'에 누가 출연했어?",
+    "expected_tools": ["kobis_search"],
+    "expected_keywords": ["황정민", "정우성", "이성민"],
+    "expected_keywords_any": true,
+    "rubric": "서울의 봄 주요 출연 배우를 최소 1명 이상 실명으로 제시해야 한다. 배역명이 함께 나오면 더 좋다."
+  },
+  {
+    "id": "kobis-005",
+    "question": "20260906이 포함된 주의 주말 박스오피스 순위 알려줘",
+    "expected_tools": ["kobis_search"],
+    "expected_keywords": ["주말", "1위", "박스오피스"],
+    "expected_keywords_any": true,
+    "rubric": "주말(금~일) 박스오피스 순위를 제시해야 한다. 주간(월~일)이 아닌 주말 기준임이 드러나야 하며, 데이터가 없으면 '없습니다'로 답해도 OK."
+  },
+  {
     "id": "web-001",
     "question": "2025년 아카데미 작품상 수상작은?",
     "expected_tools": ["web_search"],

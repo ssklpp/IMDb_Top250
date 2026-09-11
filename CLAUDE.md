@@ -87,20 +87,50 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 - **환경변수**:
   - `LOG_LEVEL` (기본 `INFO`)
   - `LOG_FORMAT=json` (기본, 프로덕션용) / `LOG_FORMAT=console` (개발 시 컬러 출력)
-- **로그 이벤트 예시**: `vectorstore.cache_hit`, `chat.request`, `chat.tool_start`, `chat.tool_end`, `chat.done`(elapsed_s, tool_calls), `chat.cache_hit`, `chat.timeout`, `kobis.request`, `kobis.success`, `kobis.timeout`
+- **로그 이벤트 예시**: `vectorstore.cache_hit`, `chat.request`, `chat.tool_start`, `chat.tool_end`, `chat.done`(elapsed_s, tool_calls), `chat.cache_hit`, `chat.timeout`, `kobis.request`, `kobis.success`, `kobis.timeout`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info)
 - 모든 로그는 `stderr`로 출력되어 uvicorn 표준 로그와 섞이지 않음
 
 `print()` 사용은 금지. 새 코드는 `from logging_config import get_logger; log = get_logger("module_name")`을 사용해야 합니다.
 
+### KOBIS 도구 모드 (`search_type`)
+`kobis_search`는 6개 모드를 지원합니다. 모두 KOBIS 오픈API 실호출로 검증되었습니다.
+
+| 모드 | 엔드포인트 | query 의미 |
+|---|---|---|
+| `movie` | `movie/searchMovieList.json` | 영화 제목 (여러 후보 나열) |
+| `detail` | `movie/searchMovieList` → `movie/searchMovieInfo.json` | 영화 제목 (상세정보 1편) |
+| `daily` | `boxoffice/searchDailyBoxOfficeList.json` | YYYYMMDD |
+| `weekly` | `boxoffice/searchWeeklyBoxOfficeList.json` `weekGb=0` | YYYYMMDD (주간 월~일) |
+| `weekend` | 같은 URL, `weekGb=1` | YYYYMMDD (주말 금~일) |
+| `weekday` | 같은 URL, `weekGb=2` | YYYYMMDD (주중 월~목) |
+
+박스오피스 4종은 단일 분기로 통합되어 있고, 헤더 라벨은 하드코딩이 아니라 응답의 `boxOfficeResult.boxofficeType`을 사용합니다(KOBIS가 "주말 박스오피스" 같은 한글 라벨을 직접 제공).
+
+**`detail` 모드의 2단계 조회**: `searchMovieInfo`는 `movieCd`(영화코드)로만 조회되고 영화명으로는 안 됩니다. 그래서 `detail`은 내부에서 목록조회 → movieCd 해석 → 상세조회를 자동 처리하며, LLM은 영화명으로 한 번만 호출하면 됩니다. query가 8자리 숫자면 movieCd로 간주해 1단계를 건너뜁니다.
+
+**`_pick_movie()`의 해석 규칙** — KOBIS 목록은 관련도순이 아니라서 1위가 정답이 아닌 경우가 많습니다("기생충" 검색 시 1위가 "마약 기생충"). 다음 순서로 좁힙니다:
+1. 공백·대소문자 무시 **정확 일치**
+2. `prdtStatNm == "개봉"` (개봉 완료작)
+3. `repNationNm == "한국"` (한국 제작 — 이게 없으면 "올드보이"가 2003년 박찬욱판이 아니라 2013년 스파이크 리 리메이크로 해석됨)
+4. 최신 `openDt`
+
+선택되지 않은 후보는 출력 말미에 `(동명/유사 제목 후보: ...)`로 덧붙여 LLM이 오선택을 인지할 수 있게 합니다.
+
+**출력 상한** — KOBIS 상세정보는 `actors`를 90건, `staffs`를 625건까지 반환합니다. `staffs`는 전량 제외(VFX 아티스트·투자 등 크루 노이즈), `actors`는 `DETAIL_MAX_ACTORS=8`건까지만 `이름(배역)` 형태로 렌더링하고 나머지는 "외 N명"으로 요약합니다. `companys`는 `companyPartNm`으로 제작사·배급사만 필터합니다.
+
 ### 도구 입력 검증 및 에러 포맷
 `kobis_search`는 Pydantic `KobisInput` 스키마(`agent.py`)로 인자를 검증합니다.
-- `search_type`: `Literal["movie", "daily", "weekly"]` — 잘못된 값 시 LangChain이 `ValidationError`를 ToolMessage로 변환해 LLM에 반환 → LLM이 자가 정정 후 재호출
+- `search_type`: `Literal["movie", "detail", "daily", "weekly", "weekend", "weekday"]` — 잘못된 값 시 LangChain이 `ValidationError`를 ToolMessage로 변환해 LLM에 반환 → LLM이 자가 정정 후 재호출
 - `open_start_dt` / `open_end_dt`: `field_validator`로 4자리 숫자 검증
-- 박스오피스 모드의 `query`: 8자리 숫자(YYYYMMDD)인지 추가 검증
+- 박스오피스 모드의 `query`: `_is_valid_date()`로 **실제 달력에 존재하는 날짜**인지 검증. 8자리 숫자 검사만으로는 부족한데, KOBIS가 `99999999`에도 에러 대신 엉뚱한 데이터를 반환하기 때문입니다. `detail`은 제목을 받으므로 이 검증 대상이 아닙니다.
+
+> 날짜 검증을 Pydantic `model_validator`로 옮기지 말 것. `search_type` 의존 규칙이라 교차 필드 검증이 필요한데, 옮기면 에러 표면이 `[TOOL_ERROR code=INVALID_DATE]`에서 Pydantic `ValidationError`로 바뀌어 이 문서와 `SYSTEM_PROMPT`의 서술이 전부 어긋납니다.
 
 도구 내부 에러는 표준 포맷으로 LLM에 반환됩니다: **`[TOOL_ERROR code=<CODE>] <message>`**
-- `MISSING_API_KEY` / `INVALID_DATE` / `TIMEOUT` / `HTTP_ERROR` / `NETWORK_ERROR` / `PARSE_ERROR`
+- `MISSING_API_KEY` / `INVALID_DATE` / `MOVIE_NOT_FOUND` / `TIMEOUT` / `HTTP_ERROR` / `NETWORK_ERROR` / `PARSE_ERROR`
 - 시스템 프롬프트(`agent.py`의 `SYSTEM_PROMPT`)에 이 코드를 보고 어떻게 행동할지 명시되어 있어, LLM이 도구를 우회(예: kobis 실패 → web_search) 하거나 사용자에게 솔직히 알릴 수 있음
+
+> **헬퍼에서 "못 찾음"을 `raise ValueError`로 신호하지 말 것.** `kobis_search`의 `except (KeyError, ValueError, TypeError)`가 잡아서 `PARSE_ERROR`로 오분류합니다. `None`/빈 dict를 반환하고 호출부에서 `_tool_error()`를 반환하세요. 같은 이유로 헬퍼는 `_kobis_get`의 예외를 잡지 않고 그대로 전파시켜 기존 4종 except가 처리하게 합니다.
 
 ### 신뢰성 (Retry / Fallback)
 - `_kobis_get()`은 `tenacity`로 KOBIS API 호출을 최대 3회까지 지수 백오프로 재시도(`RequestException`만 대상)
@@ -158,7 +188,7 @@ AI 응답 버블에는:
 - **Vector Store**: FAISS (`langchain_community.vectorstores`)
 - **Agent**: `langchain.agents.create_agent` (LangGraph 기반, `MemorySaver` checkpointer)
 - **PDF Loader**: PyMuPDF (`langchain_community.document_loaders.PyMuPDFLoader`)
-- **Korean Movie DB**: KOBIS Open API (`requests`, 영화 목록/일별/주간 박스오피스)
+- **Korean Movie DB**: KOBIS Open API (`requests`, 영화 목록/영화 상세정보/일별·주간·주말·주중 박스오피스)
 - **Web Search**: Tavily (`langchain_tavily.TavilySearch`, max_results=5)
 - **Tool Input Validation**: Pydantic `BaseModel` + `field_validator` (`Literal` 타입 강제)
 - **Retry**: `tenacity` (지수 백오프, KOBIS 호출 3회 재시도)
