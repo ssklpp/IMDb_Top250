@@ -8,10 +8,18 @@ IMDB Top 250 영화 PDF를 기반으로 한 AI 영화 전문가 챗봇. RAG(PDF 
 ## 실행 명령어
 
 ### 백엔드 (FastAPI)
+가상환경을 먼저 활성화한다. Python은 `.python-version`(3.13)으로 고정돼 있다.
 ```bash
+.venv/Scripts/activate                               # Windows (PowerShell: .venv\Scripts\Activate.ps1)
 uvicorn server:app --reload                          # 웹 서버 (포트 8000)
 python imdb_rag.py                                   # CLI 모드 (q 입력 시 종료)
 LOG_FORMAT=console uvicorn server:app --reload       # 개발용 컬러 로그 (기본은 JSON)
+```
+
+venv가 없으면 생성:
+```bash
+py -3.13 -m venv .venv                               # pyenv 사용 시 .python-version이 3.13을 선택해줌
+.venv/Scripts/python -m pip install -r requirements.txt
 ```
 
 ### 프론트엔드 (Next.js)
@@ -27,6 +35,32 @@ python -m tests.evals.run_evals --skip-judge        # 도구/키워드 검증만
 python -m tests.evals.run_evals                     # LLM-as-judge 포함 (OpenAI 비용 발생)
 python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 ```
+
+## 의존성 관리
+
+**Python 버전과 패키지 버전이 로컬과 Railway에서 동일하도록 고정돼 있다.** 이 구조를 깨뜨리지 말 것.
+
+| 파일 | 역할 |
+|---|---|
+| `.python-version` | `3.13`. pyenv(로컬)와 nixpacks(Railway)가 **같은 파일을 읽는다**. nixpacks 지원 상한이 3.13이므로 그 이상으로 올릴 수 없다. |
+| `requirements.in` | 사람이 편집하는 **직접 의존성 13개**. |
+| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 76개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
+
+### 패키지를 추가·변경할 때
+1. `requirements.in`을 수정한다.
+2. venv에서 설치하고 락을 재생성한다:
+   ```bash
+   .venv/Scripts/python -m pip install -r requirements.in
+   .venv/Scripts/python -m pip freeze > requirements.txt
+   ```
+   `requirements.txt` 상단의 "자동 생성" 주석 3줄은 유지한다.
+3. `python -m tests.evals.run_evals --skip-judge`로 회귀를 확인한다.
+4. `requirements.in`과 `requirements.txt`를 **함께** 커밋한다.
+
+### 왜 이렇게 하는가
+이전에는 `requirements.txt`가 직접 의존성만 고정하고 transitive를 열어둬서, 배포할 때마다 다른 버전이 깔렸다. 실측 당시 로컬은 `langchain-core 1.2.26`/`langsmith 0.4.38`이었지만 Railway는 `1.6.2`/`0.12.4`를 설치하고 있었고, Python도 로컬 3.14 대 Railway 3.11(nixpacks 기본값)로 갈려 있었다. 로컬 검증이 배포본을 보증하지 못하는 상태였다.
+
+`pip freeze`를 전역 환경에서 돌리면 무관한 패키지가 섞이므로 **반드시 venv 안에서** 실행할 것.
 
 ## 아키텍처
 
@@ -91,6 +125,8 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 - 모든 로그는 `stderr`로 출력되어 uvicorn 표준 로그와 섞이지 않음
 
 `print()` 사용은 금지. 새 코드는 `from logging_config import get_logger; log = get_logger("module_name")`을 사용해야 합니다.
+
+> **예외를 로깅할 때 `str(e)`를 그대로 넣지 말 것.** KOBIS는 API 키를 쿼리 파라미터로 받는데 `requests` 예외의 `str()`에는 요청 URL 전문이 들어간다. 실제로 `error=str(e)`가 네트워크 장애 시 키를 평문으로 기록하고 있었고, 지금은 `error=type(e).__name__`으로 바꿔 타입만 남긴다. 외부 API 예외를 새로 다룰 때도 같은 원칙을 지킬 것.
 
 ### KOBIS 도구 모드 (`search_type`)
 `kobis_search`는 6개 모드를 지원합니다. 모두 KOBIS 오픈API 실호출로 검증되었습니다.

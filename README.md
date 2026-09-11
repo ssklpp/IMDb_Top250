@@ -8,6 +8,7 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 ## 기술 스택
 
 ### 백엔드
+- **Python**: 3.13 (`.python-version`으로 로컬·배포 환경 통일)
 - **LLM**: OpenAI `gpt-5.4-mini` (temperature=0)
 - **Embeddings**: OpenAI `text-embedding-3-small`
 - **Vector Store**: FAISS (로컬 캐시, 최초 1회 생성 후 재사용)
@@ -57,13 +58,19 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 
 ## 설치 방법
 
+백엔드는 **Python 3.13**을 사용합니다 (`.python-version`으로 고정, Railway도 동일 버전을 씁니다).
+
 ```bash
-# 백엔드
+# 백엔드 — 가상환경 생성 후 설치
+py -3.13 -m venv .venv
+.venv/Scripts/activate                  # Windows. macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 
 # 프론트엔드
 cd web && npm install
 ```
+
+> `requirements.txt`는 전체 의존성 76개를 고정한 **자동 생성 락 파일**입니다. 직접 편집하지 말고 `requirements.in`을 수정한 뒤 재생성하세요 (방법은 `CLAUDE.md`의 "의존성 관리" 참고).
 
 ## 환경 설정
 
@@ -99,7 +106,9 @@ Vercel(프론트엔드) + Railway(백엔드) 조합으로 배포합니다.
 2. `CORS_ORIGINS`에 Vercel 도메인 설정
 3. Volumes에서 `/app/vectorstore` 마운트 (영구 저장)
 
-> **주의**: `requests`를 `requirements.txt`에 직접 명시하지 마세요. `langchain-community`의 transitive dependency로 자동 설치되며, 버전을 고정하면 의존성 충돌이 발생합니다.
+> **Python 버전**: `.python-version`(3.13)을 nixpacks가 자동으로 인식합니다. 이 파일이 없으면 nixpacks 기본값인 3.11로 빌드되어 로컬과 달라지므로 삭제하지 마세요.
+
+> **주의**: `requirements.in`에 `requests`를 직접 명시하지 마세요. `langchain-community`의 transitive dependency로 자동 설치되며, 별도로 고정하면 의존성 충돌이 발생합니다. (락 파일인 `requirements.txt`에는 자동으로 포함됩니다)
 
 ### Vercel (프론트엔드)
 1. GitHub 레포 연결 → Root Directory: `web`

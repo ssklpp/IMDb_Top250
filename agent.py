@@ -447,8 +447,10 @@ def kobis_search(
             log.info("kobis.success", search_type=search_type, items=len(movies))
             return "\n".join(lines)
 
+    # 주의: requests 예외의 str()에는 요청 URL 전문이 들어가고 KOBIS는 API 키를
+    # 쿼리 파라미터로 받으므로, str(e)를 로깅하면 키가 평문으로 남는다. 타입만 기록한다.
     except requests.Timeout as e:
-        log.warning("kobis.timeout", search_type=search_type, error=str(e))
+        log.warning("kobis.timeout", search_type=search_type, error=type(e).__name__)
         return _tool_error(
             "TIMEOUT",
             "KOBIS API 응답 시간이 초과되었습니다. 잠시 후 다시 시도하거나 web_search를 사용하세요.",
@@ -464,7 +466,9 @@ def kobis_search(
             f"KOBIS API HTTP 오류 ({e.response.status_code if e.response is not None else 'unknown'}). web_search로 대신 시도해보세요.",
         )
     except requests.RequestException as e:
-        log.warning("kobis.network_error", search_type=search_type, error=str(e))
+        log.warning(
+            "kobis.network_error", search_type=search_type, error=type(e).__name__
+        )
         return _tool_error(
             "NETWORK_ERROR",
             "KOBIS API 호출에 실패했습니다. web_search로 대신 시도해보세요.",
