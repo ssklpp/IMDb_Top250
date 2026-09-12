@@ -8,19 +8,22 @@
 
 사용법:
     python -m tests.evals.run_evals                  # 전체 실행
-    python -m tests.evals.run_evals --skip-judge     # LLM-as-judge 생략 (빠름, API 비용 0)
+    python -m tests.evals.run_evals --skip-judge     # LLM-as-judge 생략 (judge 비용만 절약)
     python -m tests.evals.run_evals --ids imdb-001   # 특정 ID만
+
+주의: --skip-judge는 채점 비용만 없앨 뿐, 에이전트 본체는 모든 항목에 대해
+실제로 OpenAI/Tavily/KOBIS를 호출한다. 완전 무료가 아니다.
+순수 함수 단위 테스트는 pytest(tests/unit/)를 쓸 것.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
-import os
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 # Windows 기본 콘솔(cp949)에서 ✓/✗ 출력 시 UnicodeEncodeError가 나므로 UTF-8로 전환
@@ -35,7 +38,11 @@ sys.path.insert(0, str(ROOT))
 from langchain_core.messages import HumanMessage  # noqa: E402
 from langchain_openai import ChatOpenAI  # noqa: E402
 
-from agent import agent  # noqa: E402
+from agent import build_agent  # noqa: E402
+
+# 평가는 항목마다 새 thread_id를 쓰므로 영속화가 불필요하고,
+# 기본 MemorySaver를 써서 실제 사용자 대화 DB를 건드리지 않게 격리한다.
+agent = build_agent()
 
 DATASET_PATH = Path(__file__).parent / "golden_dataset.json"
 
@@ -52,6 +59,7 @@ class EvalResult:
     keywords_ok: bool
     judge_score: int | None = None
     judge_reason: str = ""
+    judge_failed: bool = False
     elapsed_s: float = 0.0
     error: str | None = None
 
@@ -59,9 +67,28 @@ class EvalResult:
     def passed(self) -> bool:
         if self.error:
             return False
+        # judge를 시도했는데 실패했으면 통과로 볼 수 없다. 이 가드가 없으면
+        # judge 호출/파싱이 깨질 때 judge_score가 None으로 남아 모든 항목이
+        # 조용히 통과 처리되어 회귀 평가가 무력화된다(fail-open).
+        if self.judge_failed:
+            return False
         # judge 점수가 있으면 4 이상이어야 통과
         judge_ok = self.judge_score is None or self.judge_score >= 4
         return self.tools_ok and self.keywords_ok and judge_ok
+
+
+def _strip_code_fence(text: str) -> str:
+    """```json ... ``` 펜스로 감싼 응답에서 본문만 꺼낸다.
+
+    모델이 JSON만 달라는 지시를 어기고 펜스를 붙이는 경우가 있는데,
+    그대로 json.loads에 넘기면 파싱이 깨져 judge가 실패 처리된다.
+    """
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[-1] if "\n" in t else t
+        if t.endswith("```"):
+            t = t[: -len("```")]
+    return t.strip()
 
 
 JUDGE_PROMPT = """당신은 AI 챗봇 응답을 평가하는 엄격한 채점관입니다.
@@ -143,17 +170,26 @@ async def run_one(item: dict, judge_llm: ChatOpenAI | None) -> EvalResult:
 
     judge_score: int | None = None
     judge_reason = ""
+    judge_failed = False
     if judge_llm is not None and rubric and answer:
         try:
             judge_resp = await judge_llm.ainvoke(
                 JUDGE_PROMPT.format(question=question, rubric=rubric, answer=answer)
             )
-            judge_text = judge_resp.content if hasattr(judge_resp, "content") else str(judge_resp)
-            data = json.loads(judge_text)
-            judge_score = int(data.get("score", 0))
+            judge_text = (
+                judge_resp.content if hasattr(judge_resp, "content") else str(judge_resp)
+            )
+            if isinstance(judge_text, list):  # 일부 모델은 콘텐츠 블록 리스트를 반환
+                judge_text = "".join(
+                    b.get("text", "") if isinstance(b, dict) else str(b)
+                    for b in judge_text
+                )
+            data = json.loads(_strip_code_fence(judge_text))
+            judge_score = int(data["score"])
             judge_reason = str(data.get("reason", ""))
         except Exception as e:
-            judge_reason = f"(judge failed: {e})"
+            judge_failed = True
+            judge_reason = f"(judge failed: {type(e).__name__}: {e})"
 
     return EvalResult(
         id=item["id"],
@@ -166,6 +202,7 @@ async def run_one(item: dict, judge_llm: ChatOpenAI | None) -> EvalResult:
         keywords_ok=keywords_ok,
         judge_score=judge_score,
         judge_reason=judge_reason,
+        judge_failed=judge_failed,
         elapsed_s=elapsed,
     )
 
@@ -179,7 +216,9 @@ def print_result(r: EvalResult) -> None:
         return
     print(f"  tools: called={r.tools_called} expected={r.expected_tools} → {'OK' if r.tools_ok else 'MISS'}")
     print(f"  keywords: {r.expected_keywords} → {'OK' if r.keywords_ok else 'MISS'}")
-    if r.judge_score is not None:
+    if r.judge_failed:
+        print(f"  judge: 실패 → FAIL 처리 {r.judge_reason}")
+    elif r.judge_score is not None:
         print(f"  judge: {r.judge_score}/5 — {r.judge_reason}")
     snippet = r.answer.replace("\n", " ")[:150]
     print(f"  answer: {snippet}{'...' if len(r.answer) > 150 else ''}")
@@ -199,12 +238,11 @@ async def main() -> int:
             print(f"ID 매칭 없음: {args.ids}")
             return 1
 
+    # OPENAI_API_KEY 존재 여부는 여기서 검사하지 않는다. 상단의 `from agent import ...`가
+    # 이미 임베딩 클라이언트를 생성하므로, 키가 없으면 그 시점에 실패한다.
     judge_llm: ChatOpenAI | None = None
     if not args.skip_judge:
-        if not os.environ.get("OPENAI_API_KEY"):
-            print("⚠ OPENAI_API_KEY 없음 — judge 자동 비활성화")
-        else:
-            judge_llm = ChatOpenAI(model_name=args.judge_model, temperature=0)
+        judge_llm = ChatOpenAI(model_name=args.judge_model, temperature=0)
 
     print(f"평가 시작: {len(dataset)}개 항목 (judge={'on' if judge_llm else 'off'})")
 

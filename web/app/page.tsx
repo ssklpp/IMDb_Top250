@@ -4,6 +4,12 @@ import { useState, useRef, useEffect } from "react";
 import { useTheme } from "next-themes";
 import ReactMarkdown from "react-markdown";
 
+interface Source {
+  tool: string;
+  label: string;
+  url: string | null;
+}
+
 interface Message {
   id: string;
   question: string;
@@ -12,7 +18,13 @@ interface Message {
   isError?: boolean;
   errorCode?: string | null;
   retryable?: boolean;
+  sources?: Source[];
 }
+
+const SESSION_KEY = "movie-chat-session-id";
+const MESSAGES_KEY = "movie-chat-messages";
+// localStorage는 보통 5MB 제한이라 무한히 쌓지 않는다.
+const MAX_STORED_MESSAGES = 50;
 
 const EXAMPLE_QUESTIONS = [
   "IMDB Top 250 평점 1위 영화는?",
@@ -54,9 +66,59 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const { theme, setTheme } = useTheme();
-  const sessionId = useRef<string>(crypto.randomUUID());
+  const sessionId = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(0);
+  const [restored, setRestored] = useState(false);
+
+  // 세션 ID를 localStorage에 보존해 새로고침해도 같은 대화를 이어간다.
+  // 렌더 중이 아니라 호출 시점에 읽으므로 SSR에서 localStorage를 건드리지 않는다.
+  const getSessionId = (): string => {
+    if (sessionId.current) return sessionId.current;
+    let id = "";
+    try {
+      id = localStorage.getItem(SESSION_KEY) ?? "";
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem(SESSION_KEY, id);
+      }
+    } catch {
+      // 사생활 보호 모드 등 localStorage 차단 환경 — 세션이 유지되지 않을 뿐 동작은 한다
+      id = crypto.randomUUID();
+    }
+    sessionId.current = id;
+    return id;
+  };
+
+  // 마운트 시 이전 대화 복원. 백엔드는 SQLite 체크포인터로 맥락을 기억하므로,
+  // 화면만 비어 있으면 "봇은 기억하는데 나는 안 보이는" 상태가 된다.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(MESSAGES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setMessages(parsed);
+      }
+    } catch {
+      // 저장된 형식이 깨졌으면 빈 대화로 시작한다
+    }
+    setRestored(true);
+  }, []);
+
+  // 복원이 끝나기 전에 저장하면 빈 배열로 덮어써서 대화가 날아간다.
+  useEffect(() => {
+    if (!restored) return;
+    try {
+      // 진행 중 상태(toolStatus)는 저장하지 않는다. 요청 도중 새로고침하면
+      // "검색 중..."이 멈춘 채로 복원되기 때문이다.
+      const persistable = messages
+        .slice(-MAX_STORED_MESSAGES)
+        .map((m) => ({ ...m, toolStatus: null }));
+      localStorage.setItem(MESSAGES_KEY, JSON.stringify(persistable));
+    } catch {
+      // 용량 초과 등 — 저장만 실패하고 대화는 계속된다
+    }
+  }, [messages, restored]);
 
   useEffect(() => {
     if (messages.length > prevCountRef.current) {
@@ -76,8 +138,15 @@ export default function Home() {
   const handleNewConversation = () => {
     setMessages([]);
     setQuestion("");
-    sessionId.current = crypto.randomUUID();
+    const fresh = crypto.randomUUID();
+    sessionId.current = fresh;
     prevCountRef.current = 0;
+    try {
+      localStorage.setItem(SESSION_KEY, fresh);
+      localStorage.removeItem(MESSAGES_KEY);
+    } catch {
+      // localStorage 차단 환경 — 메모리상으로는 이미 새 대화로 전환됐다
+    }
   };
 
   const handleCopy = async (msgId: string, text: string) => {
@@ -111,7 +180,7 @@ export default function Home() {
     setMessages((prev) =>
       prev.map((m) =>
         m.id === msgId
-          ? { ...m, answer: "", isError: false, errorCode: null, retryable: false, toolStatus: null }
+          ? { ...m, answer: "", isError: false, errorCode: null, retryable: false, toolStatus: null, sources: [] }
           : m
       )
     );
@@ -121,7 +190,7 @@ export default function Home() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q, session_id: sessionId.current }),
+        body: JSON.stringify({ question: q, session_id: getSessionId() }),
       });
 
       if (!res.ok || !res.body) {
@@ -139,11 +208,33 @@ export default function Home() {
 
         const chunk = decoder.decode(value, { stream: true });
 
-        const displayText = chunk.replace(/\x1f((?:tool|error):[^\n]*)\n/g, (_, payload) => {
+        const displayText = chunk.replace(/\x1f((?:tool|error|sources):[^\n]*)\n/g, (_, payload) => {
           if (payload === "tool:end") {
             setMessages((prev) =>
               prev.map((m) => m.id === msgId ? { ...m, toolStatus: null } : m)
             );
+          } else if (payload.startsWith("sources:")) {
+            try {
+              const incoming: Source[] = JSON.parse(payload.slice(8));
+              setMessages((prev) =>
+                prev.map((m) => {
+                  if (m.id !== msgId) return m;
+                  // 도구가 여러 번 호출되면 출처도 여러 번 온다. URL+라벨로 중복 제거.
+                  const seen = new Set((m.sources ?? []).map((s) => `${s.url}|${s.label}`));
+                  const merged = [...(m.sources ?? [])];
+                  for (const s of incoming) {
+                    const key = `${s.url}|${s.label}`;
+                    if (!seen.has(key)) {
+                      seen.add(key);
+                      merged.push(s);
+                    }
+                  }
+                  return { ...m, sources: merged };
+                })
+              );
+            } catch {
+              // 출처 파싱 실패는 답변 자체에 영향을 주지 않으므로 무시한다
+            }
           } else if (payload.startsWith("tool:")) {
             const toolName = payload.slice(5);
             const label =
@@ -320,6 +411,37 @@ export default function Home() {
                           <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
                         </span>
                       )
+                    )}
+
+                    {/* 출처 — 답변이 어느 도구/문서에서 나왔는지 밝힌다 */}
+                    {!msg.isError && msg.answer && msg.sources && msg.sources.length > 0 && (
+                      <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+                        <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">출처</div>
+                        <ul className="flex flex-wrap gap-1.5">
+                          {msg.sources.map((s, i) => (
+                            <li key={`${s.url ?? s.label}-${i}`}>
+                              {s.url ? (
+                                <a
+                                  href={s.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-block max-w-[220px] truncate text-[11px] px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                                  title={s.label}
+                                >
+                                  {s.label}
+                                </a>
+                              ) : (
+                                <span
+                                  className="inline-block max-w-[220px] truncate text-[11px] px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
+                                  title={s.label}
+                                >
+                                  {s.label}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     )}
                   </div>
 

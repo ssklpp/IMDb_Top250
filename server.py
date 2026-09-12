@@ -1,28 +1,56 @@
 import asyncio
 import hashlib
+import json
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
 
+import aiosqlite
 from cachetools import TTLCache
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessageChunk, HumanMessage
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from agent import agent
+from agent import CHECKPOINT_DB_PATH, build_agent
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
+from sources import extract_sources
 
 configure_logging()
 log = get_logger("server")
 
 REQUEST_TIMEOUT_S = 120
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """SQLite 체크포인터 연결을 앱 생명주기에 묶는다.
+
+    AsyncSqliteSaver를 쓰는 이유: 이 서버는 astream_events(async)로 실행되는데
+    동기 SqliteSaver는 aput/aget_tuple에서 NotImplementedError를 던진다.
+    파일 기반이라 프로세스가 재시작돼도 사용자 대화가 유지된다.
+    """
+    Path(CHECKPOINT_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    conn = await aiosqlite.connect(CHECKPOINT_DB_PATH)
+    saver = AsyncSqliteSaver(conn)
+    await saver.setup()
+    app.state.agent = build_agent(saver)
+    log.info("startup.checkpointer_ready", db=CHECKPOINT_DB_PATH)
+    try:
+        yield
+    finally:
+        await conn.close()
+        log.info("shutdown.checkpointer_closed")
+
+
+app = FastAPI(lifespan=lifespan)
 
 _cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
 
@@ -102,7 +130,7 @@ async def chat(request: Request, req: QuestionRequest):
         tool_calls = 0
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_S):
-                async for event in agent.astream_events(
+                async for event in request.app.state.agent.astream_events(
                     {"messages": [HumanMessage(content=req.question)]},
                     config=config,
                     version="v2",
@@ -116,7 +144,21 @@ async def chat(request: Request, req: QuestionRequest):
                         yield f"\x1ftool:{tool_name}\n"
 
                     elif kind == "on_tool_end":
-                        log.info("chat.tool_end", tool=event.get("name", "unknown"))
+                        tool_name = event.get("name", "unknown")
+                        log.info("chat.tool_end", tool=tool_name)
+                        sources = extract_sources(
+                            tool_name, event.get("data", {}).get("output")
+                        )
+                        if sources:
+                            log.info(
+                                "chat.sources", tool=tool_name, count=len(sources)
+                            )
+                            line = f"\x1fsources:{json.dumps(sources, ensure_ascii=False)}\n"
+                            # 캐시에도 담는다. 안 그러면 캐시 HIT 응답만 출처가 사라져
+                            # 같은 질문인데 표시가 달라진다. tool start/end 센티넬은
+                            # 캐시에 넣지 않는다 — 재생 시 "검색 중"이 헛깜빡인다.
+                            buffer.append(line)
+                            yield line
                         yield "\x1ftool:end\n"
 
                     elif kind == "on_chat_model_stream":

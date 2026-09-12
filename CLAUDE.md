@@ -29,12 +29,16 @@ cd web && npm run build            # 프로덕션 빌드
 cd web && npm run lint             # ESLint 검사
 ```
 
-### 평가 (Evals)
+### 테스트
 ```bash
-python -m tests.evals.run_evals --skip-judge        # 도구/키워드 검증만 (빠름, OpenAI 비용 0)
-python -m tests.evals.run_evals                     # LLM-as-judge 포함 (OpenAI 비용 발생)
+pytest tests/unit/ -q                               # 단위 테스트 (API 호출 없음, 0.1초, 비용 0)
+python -m tests.evals.run_evals --skip-judge        # 에이전트 평가, judge 채점만 생략
+python -m tests.evals.run_evals                     # LLM-as-judge 포함
 python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 ```
+
+**코드를 고쳤으면 `pytest tests/unit/`를 먼저 돌릴 것.** 0.1초면 끝나고 비용이 없다.
+평가(`tests/evals`)는 실제 LLM·도구를 호출하므로 `--skip-judge`를 줘도 비용이 든다.
 
 ## 의존성 관리
 
@@ -43,19 +47,23 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 | 파일 | 역할 |
 |---|---|
 | `.python-version` | `3.13`. pyenv(로컬)와 nixpacks(Railway)가 **같은 파일을 읽는다**. nixpacks 지원 상한이 3.13이므로 그 이상으로 올릴 수 없다. |
-| `requirements.in` | 사람이 편집하는 **직접 의존성 13개**. |
-| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 76개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
+| `requirements.in` | 사람이 편집하는 **직접 의존성 14개** (프로덕션). |
+| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 79개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
+| `requirements-dev.txt` | 개발 전용(pytest). **프로덕션 락과 분리**되어 Railway에는 설치되지 않는다. |
 
 ### 패키지를 추가·변경할 때
-1. `requirements.in`을 수정한다.
+1. `requirements.in`(프로덕션) 또는 `requirements-dev.txt`(개발 도구)를 수정한다.
 2. venv에서 설치하고 락을 재생성한다:
    ```bash
    .venv/Scripts/python -m pip install -r requirements.in
-   .venv/Scripts/python -m pip freeze > requirements.txt
+   .venv/Scripts/python scripts/gen_lock.py
    ```
-   `requirements.txt` 상단의 "자동 생성" 주석 3줄은 유지한다.
-3. `python -m tests.evals.run_evals --skip-judge`로 회귀를 확인한다.
+3. `pytest tests/unit/ -q`로 먼저 확인하고, 필요하면 `python -m tests.evals.run_evals --skip-judge`까지 돌린다.
 4. `requirements.in`과 `requirements.txt`를 **함께** 커밋한다.
+
+> **`pip freeze > requirements.txt`를 쓰지 말 것.** venv에는 개발 도구(pytest 등)도 설치돼
+> 있어서 freeze를 그대로 쓰면 프로덕션 락에 개발 의존성이 섞여 Railway까지 실려간다.
+> `scripts/gen_lock.py`는 `requirements.in`의 의존성 트리만 추적하므로 이 문제가 없다.
 
 ### 왜 이렇게 하는가
 이전에는 `requirements.txt`가 직접 의존성만 고정하고 transitive를 열어둬서, 배포할 때마다 다른 버전이 깔렸다. 실측 당시 로컬은 `langchain-core 1.2.26`/`langsmith 0.4.38`이었지만 Railway는 `1.6.2`/`0.12.4`를 설치하고 있었고, Python도 로컬 3.14 대 Railway 3.11(nixpacks 기본값)로 갈려 있었다. 로컬 검증이 배포본을 보증하지 못하는 상태였다.
@@ -76,15 +84,32 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 `web/app/api/chat/route.ts`는 순수 프록시로, 스트리밍 응답을 그대로 브라우저에 전달합니다. FastAPI 주소는 `web/.env.local`의 `BACKEND_URL`로 설정합니다.
 
 ### 공유 모듈 구조
-에이전트 초기화 코드는 `agent.py`에만 존재하며, `server.py`와 `imdb_rag.py` 모두 여기서 `agent`를 import합니다.
 
 ```
 logging_config.py ← 공통: structlog JSON 로거 + ContextVar(session_id/request_id)
-agent.py          ← 공통: vectorstore 캐시, LLM, tools(Pydantic 스키마 검증, tenacity 재시도), agent 초기화
-imdb_rag.py       ← CLI 루프만 (thread_id로 대화 히스토리 유지)
-server.py         ← FastAPI 앱만 (StreamingResponse, request_id 발급, 에러 코드 분류)
+kobis_format.py   ← 순수 함수: 영화 판별(pick_movie), 날짜/응답 가공. 외부 의존 없음
+sources.py        ← 순수 함수: 도구 출력에서 답변 출처 추출. 외부 의존 없음
+agent.py          ← vectorstore 캐시, LLM, tools, build_agent() 팩토리
+imdb_rag.py       ← CLI 루프 (sync SqliteSaver)
+server.py         ← FastAPI 앱 (lifespan에서 AsyncSqliteSaver 준비, 스트리밍/에러 분류)
+scripts/gen_lock.py ← requirements.in → requirements.txt 락 생성
+tests/unit/       ← pytest 단위 테스트 (kobis_format, sources)
 tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 ```
+
+**`kobis_format.py`와 `sources.py`를 `agent.py`에서 분리한 이유**: `agent.py`는 import만 해도
+벡터스토어를 로드하고 OpenAI 클라이언트를 만든다(약 6초 + API 키 필요). 순수 로직을 떼어내니
+단위 테스트가 0.1초에 끝나고 키 없이도 돌아간다. **새로 순수 함수를 만들 때도 이 두 모듈에
+넣을지 먼저 검토할 것** — 테스트 가능성이 크게 달라진다.
+
+### 에이전트 생성 — `build_agent(checkpointer)`
+모듈 수준 `agent` 객체는 없다. 진입점마다 필요한 체크포인터가 달라서 팩토리로 주입한다.
+
+| 진입점 | 체크포인터 | 이유 |
+|---|---|---|
+| `server.py` | `AsyncSqliteSaver` | `astream_events`가 async라 **sync 세이버는 `aput`에서 `NotImplementedError`를 던진다** |
+| `imdb_rag.py` | `SqliteSaver` | CLI는 sync `invoke`를 쓴다. 서버와 같은 DB 파일을 공유 |
+| `tests/evals` | `MemorySaver`(기본값) | 항목마다 새 thread라 영속화가 불필요하고, 실제 대화 DB를 건드리지 않게 격리 |
 
 ### 벡터스토어 캐시
 `agent.py` 시작 시 `vectorstore/index.faiss` 존재 여부를 확인합니다.
@@ -94,18 +119,47 @@ tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합니다.
 청크 파라미터를 변경할 경우 `vectorstore/` 폴더를 삭제하고 재시작해야 반영됩니다.
 
-### 대화 히스토리
-에이전트에 `MemorySaver` checkpointer가 설정되어 있습니다. 각 세션은 `thread_id`(UUID)로 구분됩니다.
-- **CLI**: `imdb_rag.py` 실행 시 새 `thread_id` 생성, 프로세스 종료까지 유지
-- **웹**: 브라우저 탭 로드 시 `crypto.randomUUID()`로 생성, 모든 요청에 `session_id`로 전달
+### 대화 영속화
+각 세션은 `thread_id`(UUID)로 구분되며, **SQLite 체크포인터에 저장되어 프로세스가 재시작돼도 유지됩니다.**
+
+- **DB 경로**: `CHECKPOINT_DB_PATH` 환경변수, 기본값 `vectorstore/checkpoints.sqlite`.
+  기본값을 `vectorstore/` 아래로 둔 이유는 Railway에서 이미 `/app/vectorstore`가 영구 볼륨으로
+  마운트돼 있어 **추가 설정 없이** 재시작 후에도 대화가 보존되기 때문입니다.
+- **웹**: 프론트가 `localStorage`에 `session_id`와 메시지 목록을 저장합니다. 새로고침해도
+  같은 대화를 이어가고 화면도 복원됩니다. 백엔드만 영속화하면 "봇은 기억하는데 화면은 빈" 상태가 됩니다.
+- **CLI**: 실행 시 새 `thread_id` 생성. 서버와 같은 DB 파일을 공유합니다.
+- **새 대화** 버튼은 새 `thread_id`를 발급하고 `localStorage`의 메시지를 지웁니다.
+
+> `MemorySaver`는 LangGraph 문서가 "디버깅/테스트 전용"이라고 명시한 클래스이고 정리 로직이
+> 없어 방문자당 세션이 영구 잔류합니다. 그래서 프로덕션 경로에서는 쓰지 않습니다.
 
 ### 스트리밍
 `server.py`는 `agent.astream_events(version="v2")`로 이벤트를 구독합니다.
 - `on_chat_model_stream`: `AIMessageChunk.content`를 그대로 전송
 - `on_tool_start` / `on_tool_end`: `\x1ftool:<name>\n` / `\x1ftool:end\n` 형태의 센티넬 라인을 텍스트 스트림에 삽입
+- `on_tool_end`에서 출처 추출 시: **`\x1fsources:<JSON 배열>\n`**. `sources.extract_sources()`가
+  `[{"tool","label","url"}]`을 만듭니다
 - 에러 발생 시: **`\x1ferror:<code>|<메시지>\n`** 센티넬을 전송. `code`는 `TIMEOUT` / `INTERNAL` 등 (`server._error_sentinel()` 참고)
 
-프론트엔드는 청크마다 정규식(`/\x1f((?:tool|error):[^\n]*)\n/g`)으로 센티넬을 추출합니다. `tool:` 센티넬은 도구 상태를 표시하고, `error:` 센티넬은 `code|message`로 split하여 빨간 에러 버블 + 코드별 아이콘/라벨로 렌더링합니다. 나머지 텍스트는 답변에 추가됩니다. `asyncio.timeout(120)`으로 2분 초과 시 자동 종료됩니다.
+프론트엔드는 청크마다 정규식(`/\x1f((?:tool|error|sources):[^\n]*)\n/g`)으로 센티넬을 추출합니다. `tool:` 센티넬은 도구 상태를 표시하고, `sources:` 센티넬은 답변 하단의 출처 칩으로, `error:` 센티넬은 `code|message`로 split하여 빨간 에러 버블 + 코드별 아이콘/라벨로 렌더링합니다. 나머지 텍스트는 답변에 추가됩니다. `asyncio.timeout(120)`으로 2분 초과 시 자동 종료됩니다.
+
+> **센티넬을 추가할 때는 프론트 정규식의 alternation도 함께 고쳐야 합니다.** 안 고치면 새 센티넬이
+> 본문 텍스트로 그대로 화면에 출력됩니다.
+
+### 답변 출처 (`sources.py`)
+도구마다 출처의 형태가 완전히 달라서 각각 따로 처리합니다. 실제 응답을 확인해 맞춘 것이라
+라이브러리 응답 구조가 바뀌면 조용히 빈 출처가 되므로 `tests/unit/test_sources.py`로 고정해 두었습니다.
+
+| 도구 | 출처를 어디서 얻는가 | 표시 |
+|---|---|---|
+| `imdb_search` | `ToolMessage.artifact`의 `list[Document]` → `metadata["page"]` | PDF 쪽번호 (0-기반이라 +1) |
+| `web_search` | Tavily는 artifact를 안 채운다. **`content`가 JSON 문자열**이라 파싱해서 `results[].url` 추출 | 클릭 가능한 원문 링크 |
+| `kobis_search` | 문자열만 반환해 URL이 없다 | 기관 홈페이지 고정 |
+
+- `imdb_tool`은 `response_format="content_and_artifact"`로 생성해야 `artifact`가 채워집니다.
+  기본값 `"content"`로 되돌리면 **쪽번호 출처가 조용히 사라집니다.**
+- KOBIS 응답이 `[TOOL_ERROR`로 시작하면 출처로 내보내지 않습니다. 실패한 호출은 답변의 근거가 아닙니다.
+- 출처 센티넬은 응답 캐시에도 저장됩니다. 안 그러면 캐시 HIT일 때만 출처가 사라져 표시가 달라집니다.
 
 응답 헤더에 `X-Request-Id`, `X-Session-Id`, `X-Cache`(HIT/MISS)가 포함됩니다.
 
@@ -144,7 +198,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 
 **`detail` 모드의 2단계 조회**: `searchMovieInfo`는 `movieCd`(영화코드)로만 조회되고 영화명으로는 안 됩니다. 그래서 `detail`은 내부에서 목록조회 → movieCd 해석 → 상세조회를 자동 처리하며, LLM은 영화명으로 한 번만 호출하면 됩니다. query가 8자리 숫자면 movieCd로 간주해 1단계를 건너뜁니다.
 
-**`_pick_movie()`의 해석 규칙** — KOBIS 목록은 관련도순이 아니라서 1위가 정답이 아닌 경우가 많습니다("기생충" 검색 시 1위가 "마약 기생충"). 다음 순서로 좁힙니다:
+**`pick_movie()`의 해석 규칙** (`kobis_format.py`) — KOBIS 목록은 관련도순이 아니라서 1위가 정답이 아닌 경우가 많습니다("기생충" 검색 시 1위가 "마약 기생충"). 다음 순서로 좁힙니다:
 1. 공백·대소문자 무시 **정확 일치**
 2. `prdtStatNm == "개봉"` (개봉 완료작)
 3. `repNationNm == "한국"` (한국 제작 — 이게 없으면 "올드보이"가 2003년 박찬욱판이 아니라 2013년 스파이크 리 리메이크로 해석됨)
@@ -158,7 +212,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 `kobis_search`는 Pydantic `KobisInput` 스키마(`agent.py`)로 인자를 검증합니다.
 - `search_type`: `Literal["movie", "detail", "daily", "weekly", "weekend", "weekday"]` — 잘못된 값 시 LangChain이 `ValidationError`를 ToolMessage로 변환해 LLM에 반환 → LLM이 자가 정정 후 재호출
 - `open_start_dt` / `open_end_dt`: `field_validator`로 4자리 숫자 검증
-- 박스오피스 모드의 `query`: `_is_valid_date()`로 **실제 달력에 존재하는 날짜**인지 검증. 8자리 숫자 검사만으로는 부족한데, KOBIS가 `99999999`에도 에러 대신 엉뚱한 데이터를 반환하기 때문입니다. `detail`은 제목을 받으므로 이 검증 대상이 아닙니다.
+- 박스오피스 모드의 `query`: `is_valid_date()`(`kobis_format.py`)로 **8자리 숫자이면서 실제 달력에 존재하는 날짜**인지 검증. 두 조건을 모두 봐야 합니다 — KOBIS가 `99999999`에도 에러 대신 엉뚱한 데이터를 반환하고, 반대로 `strptime`만 쓰면 제로 패딩에 관대해서 7자리 `'2026091'`을 2026-09-01로 통과시킵니다(실제로 있었던 버그). `detail`은 제목을 받으므로 이 검증 대상이 아닙니다.
 
 > 날짜 검증을 Pydantic `model_validator`로 옮기지 말 것. `search_type` 의존 규칙이라 교차 필드 검증이 필요한데, 옮기면 에러 표면이 `[TOOL_ERROR code=INVALID_DATE]`에서 Pydantic `ValidationError`로 바뀌어 이 문서와 `SYSTEM_PROMPT`의 서술이 전부 어긋납니다.
 
@@ -166,7 +220,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 - `MISSING_API_KEY` / `INVALID_DATE` / `MOVIE_NOT_FOUND` / `TIMEOUT` / `HTTP_ERROR` / `NETWORK_ERROR` / `PARSE_ERROR`
 - 시스템 프롬프트(`agent.py`의 `SYSTEM_PROMPT`)에 이 코드를 보고 어떻게 행동할지 명시되어 있어, LLM이 도구를 우회(예: kobis 실패 → web_search) 하거나 사용자에게 솔직히 알릴 수 있음
 
-> **헬퍼에서 "못 찾음"을 `raise ValueError`로 신호하지 말 것.** `kobis_search`의 `except (KeyError, ValueError, TypeError)`가 잡아서 `PARSE_ERROR`로 오분류합니다. `None`/빈 dict를 반환하고 호출부에서 `_tool_error()`를 반환하세요. 같은 이유로 헬퍼는 `_kobis_get`의 예외를 잡지 않고 그대로 전파시켜 기존 4종 except가 처리하게 합니다.
+> **헬퍼에서 "못 찾음"을 `raise ValueError`로 신호하지 말 것.** `kobis_search`의 `except (KeyError, ValueError, TypeError)`가 잡아서 `PARSE_ERROR`로 오분류합니다. `None`/빈 dict를 반환하고 호출부에서 `tool_error()`를 반환하세요. 같은 이유로 헬퍼는 `_kobis_get`의 예외를 잡지 않고 그대로 전파시켜 기존 4종 except가 처리하게 합니다.
 
 ### 신뢰성 (Retry / Fallback)
 - `_kobis_get()`은 `tenacity`로 KOBIS API 호출을 최대 3회까지 지수 백오프로 재시도(`RequestException`만 대상)
@@ -207,16 +261,24 @@ AI 응답 버블에는:
 
 프론트엔드(`page.tsx`)는 이 `code`로 라벨/재시도 가능 여부를 결정합니다.
 
-### 평가 (Evals)
-`tests/evals/`에 골든 데이터셋 기반 회귀 평가가 있습니다.
+### 테스트 두 층
+
+**1. 단위 테스트 — `tests/unit/`** (pytest, API 호출 없음, 0.1초)
+`kobis_format.py`와 `sources.py`의 순수 로직을 검증합니다. 각 테스트는 **어떤 실패를 막는지**
+docstring에 적혀 있습니다(대부분 실제 KOBIS 응답에서 발견한 문제를 그대로 옮긴 것).
+`requirements-dev.txt`의 pytest가 필요합니다.
+
+**2. 에이전트 회귀 평가 — `tests/evals/`** (실제 LLM·도구 호출, 비용 발생)
 - `golden_dataset.json` — 항목당 `id`/`question`/`expected_tools`/`expected_keywords`(`_any`)/`rubric`
-- `run_evals.py` — 각 질문을 `agent.astream_events`로 실행하며 도구 호출 추적 + 키워드 매칭 + (옵션) LLM-as-judge 채점
-- 실행:
-  - `python -m tests.evals.run_evals` (judge 포함, OpenAI 비용 발생)
-  - `python -m tests.evals.run_evals --skip-judge` (도구/키워드만, 비용 0)
-  - `python -m tests.evals.run_evals --ids imdb-001 kobis-002` (특정 항목만)
+- `run_evals.py` — 각 질문을 `astream_events`로 실행하며 도구 호출 추적 + 키워드 매칭 + (옵션) LLM-as-judge 채점
 - 종료 코드: 전체 통과 시 0, 하나라도 실패 시 1 → CI 회귀 차단용
 - 새 항목 추가 시 `expected_keywords_any`(any/all)와 `rubric` 작성을 잊지 말 것
+- **judge 호출이 실패하면 해당 항목은 실패 처리됩니다.** 예전에는 `judge_score`가 `None`으로
+  남아 자동 통과되면서 평가가 조용히 무력화되는 fail-open 구조였습니다.
+- `--skip-judge`는 채점 비용만 없앨 뿐 에이전트 본체는 실제로 호출됩니다. **완전 무료가 아닙니다.**
+
+현재 상태: 단위 테스트 51개 전부 통과, 평가 12/13 통과
+(`refusal-001`은 SYSTEM_PROMPT에 "영화 외 주제 거절" 규칙이 없어서 생기는 기존 실패입니다).
 
 ## 기술 스택
 - **LLM**: OpenAI `gpt-5.4-mini` (temperature=0)
@@ -235,7 +297,8 @@ AI 응답 버블에는:
 - **Frontend**: Next.js 16 (App Router, TypeScript, Tailwind CSS v4)
 - **Dark Mode**: `next-themes` (class 전략, 시스템 설정 연동)
 - **Markdown**: `react-markdown`
-- **Evals**: 자체 구현 — `tests/evals/run_evals.py` (golden dataset + LLM-as-judge)
+- **대화 영속화**: `langgraph-checkpoint-sqlite` (서버 `AsyncSqliteSaver` / CLI `SqliteSaver`)
+- **테스트**: pytest 단위 테스트 + 자체 구현 평가 러너 (golden dataset + LLM-as-judge)
 
 ## Next.js 16 주의사항
 Next.js 16은 이전 버전과 API, 파일 구조가 다릅니다. `web/` 코드 수정 시 반드시 `web/node_modules/next/dist/docs/`의 가이드를 참고하세요 (`web/AGENTS.md` 참조).

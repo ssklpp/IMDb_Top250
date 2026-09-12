@@ -1,0 +1,4 @@
+# 개발 전용 의존성. 프로덕션(requirements.txt)과 분리되어 Railway에는 설치되지 않는다.
+# 설치: .venv/Scripts/python -m pip install -r requirements-dev.txt
+
+pytest==9.1.1

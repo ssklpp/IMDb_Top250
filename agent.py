@@ -4,7 +4,6 @@ load_dotenv()
 
 import os
 import re
-from datetime import datetime
 from typing import Literal
 
 import requests
@@ -25,11 +24,28 @@ from tenacity import (
     wait_exponential,
 )
 
+from kobis_format import (
+    DETAIL_MAX_CANDIDATES,
+    fmt_date,
+    format_movie_info,
+    format_show_range,
+    is_valid_date,
+    pick_movie,
+    tool_error,
+)
 from logging_config import get_logger
 
 log = get_logger("agent")
 
 VECTORSTORE_PATH = "vectorstore"
+
+# 대화 체크포인트 DB. 기본값을 vectorstore/ 아래로 둔 이유는 Railway에서 이미
+# /app/vectorstore가 영구 볼륨으로 마운트돼 있어 추가 설정 없이 재시작 후에도
+# 대화가 보존되기 때문이다. 다른 위치를 쓰려면 CHECKPOINT_DB_PATH로 덮어쓴다.
+CHECKPOINT_DB_PATH = os.environ.get(
+    "CHECKPOINT_DB_PATH", f"{VECTORSTORE_PATH}/checkpoints.sqlite"
+)
+
 KOBIS_TIMEOUT = 10
 KOBIS_MAX_ATTEMPTS = 3
 KOBIS_BASE = "https://www.kobis.or.kr/kobisopenapi/webservice/rest"
@@ -43,12 +59,6 @@ BOXOFFICE_FALLBACK_LABEL = {
     "weekend": "주말 박스오피스",
     "weekday": "주중 박스오피스",
 }
-
-# detail 모드 출력 상한. KOBIS는 actors를 90건, staffs를 625건까지 반환하므로
-# 그대로 넣으면 LLM 컨텍스트를 잡아먹는다. staffs는 아예 제외한다.
-DETAIL_MAX_ACTORS = 8
-DETAIL_MAX_COMPANIES = 2
-DETAIL_MAX_CANDIDATES = 3
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
@@ -74,6 +84,9 @@ imdb_tool = create_retriever_tool(
     retriever,
     name="imdb_search",
     description="IMDB Top 250 PDF에서 영화 정보를 검색합니다. 영화 제목, 감독, 출연진, 평점 등을 찾을 때 사용하세요.",
+    # content만 쓰면 검색된 Document의 메타데이터(PDF 쪽번호)가 버려진다.
+    # 출처 표시에 필요하므로 artifact로 원본 Document를 함께 받는다.
+    response_format="content_and_artifact",
 )
 
 web_tool = TavilySearch(
@@ -132,11 +145,6 @@ class KobisInput(BaseModel):
         return v
 
 
-def _tool_error(code: str, message: str) -> str:
-    """LLM에 반환되는 표준 에러 포맷. LLM이 코드를 보고 재시도/우회 결정 가능."""
-    return f"[TOOL_ERROR code={code}] {message}"
-
-
 @retry(
     retry=retry_if_exception_type(requests.RequestException),
     stop=stop_after_attempt(KOBIS_MAX_ATTEMPTS),
@@ -147,123 +155,6 @@ def _kobis_get(url: str, params: dict) -> dict:
     resp = requests.get(url, params=params, timeout=KOBIS_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
-
-
-def _fmt_date(v: str) -> str:
-    """'20190530' → '2019-05-30'. 8자리가 아니면 원본 그대로."""
-    return f"{v[:4]}-{v[4:6]}-{v[6:]}" if len(v) == 8 and v.isdigit() else v
-
-
-def _is_valid_date(v: str) -> bool:
-    """실제 달력에 존재하는 YYYYMMDD인지 검사.
-
-    KOBIS는 '99999999' 같은 값에도 에러 대신 엉뚱한 데이터를 반환하므로
-    호출 전에 걸러야 한다. 8자리 숫자 검사만으로는 부족하다.
-    """
-    try:
-        datetime.strptime(v, "%Y%m%d")
-        return True
-    except ValueError:
-        return False
-
-
-def _format_show_range(show_range: str) -> str:
-    """'20260831~20260906' → '2026-08-31~2026-09-06'. 시작=종료면 한 날짜로 축약."""
-    parts = [p for p in show_range.split("~") if len(p) == 8]
-    if not parts:
-        return ""
-    fmt = [_fmt_date(p) for p in parts]
-    return fmt[0] if len(set(fmt)) == 1 else "~".join(fmt)
-
-
-def _pick_movie(movies: list[dict], title: str) -> dict:
-    """동명/유사 제목이 여러 건일 때 1건 선택.
-
-    KOBIS 목록은 관련도순이 아니라서 1위가 정답이 아닌 경우가 많다
-    ('기생충' → 1위가 '마약 기생충', '부산행' → 1위가 '부산행:익스텐디드').
-    공백·대소문자 무시 정확 일치 → 개봉 완료작 → 한국 제작 → 최신 개봉일 순으로 좁힌다.
-    한국 제작을 우선하는 이유는 KOBIS가 한국 영화 DB이고 이 챗봇이 국내 개봉작을
-    다루기 때문이다. 이게 없으면 '올드보이'가 2003년 박찬욱판이 아니라
-    2013년 스파이크 리 리메이크로 해석된다.
-    max()는 동률 시 첫 항목을 주므로 openDt가 모두 비어도 API 순서로 폴백된다.
-    """
-    norm = title.replace(" ", "").lower()
-    exact = [m for m in movies if m.get("movieNm", "").replace(" ", "").lower() == norm]
-    pool = exact or movies
-    released = [m for m in pool if m.get("prdtStatNm") == "개봉"]
-    pool = released or pool
-    korean = [m for m in pool if m.get("repNationNm") == "한국"]
-    pool = korean or pool
-    return max(pool, key=lambda m: m.get("openDt") or "")
-
-
-def _format_movie_info(info: dict) -> str:
-    """searchMovieInfo 응답을 LLM 친화 요약으로 축약.
-
-    actors가 90건, staffs가 625건까지 올 수 있으므로 staffs는 제외하고
-    actors는 DETAIL_MAX_ACTORS로 자른다. 없는 항목은 줄 자체를 생략한다.
-    """
-    lines: list[str] = []
-
-    head = info.get("movieNm", "")
-    if info.get("movieNmEn"):
-        head += f" ({info['movieNmEn']})"
-    if info.get("prdtYear"):
-        head += f" / 제작연도 {info['prdtYear']}"
-    lines.append(head)
-
-    open_dt = _fmt_date(info.get("openDt", ""))
-    if open_dt:
-        stat = info.get("prdtStatNm", "")
-        lines.append(f"- 개봉일: {open_dt}" + (f" ({stat})" if stat else ""))
-    if info.get("showTm"):
-        lines.append(f"- 상영시간: {info['showTm']}분")
-
-    genres = ", ".join(g.get("genreNm", "") for g in info.get("genres", []))
-    if genres:
-        lines.append(f"- 장르: {genres}")
-    nations = ", ".join(n.get("nationNm", "") for n in info.get("nations", []))
-    if nations:
-        lines.append(f"- 국가: {nations}")
-
-    audits = info.get("audits", [])
-    if audits and audits[0].get("watchGradeNm"):
-        lines.append(f"- 관람등급: {audits[0]['watchGradeNm']}")
-
-    directors = ", ".join(d.get("peopleNm", "") for d in info.get("directors", []))
-    if directors:
-        lines.append(f"- 감독: {directors}")
-
-    actors = info.get("actors", [])
-    if actors:
-        names = []
-        for a in actors[:DETAIL_MAX_ACTORS]:
-            nm = a.get("peopleNm", "")
-            cast = (a.get("cast") or "").strip()
-            names.append(f"{nm}({cast})" if cast else nm)
-        more = len(actors) - DETAIL_MAX_ACTORS
-        lines.append(
-            f"- 출연: {', '.join(names)}" + (f" 외 {more}명" if more > 0 else "")
-        )
-
-    parts: dict[str, list[str]] = {}
-    for c in info.get("companys", []):
-        parts.setdefault(c.get("companyPartNm", ""), []).append(c.get("companyNm", ""))
-    for part in ("제작사", "배급사"):
-        if parts.get(part):
-            lines.append(f"- {part}: {', '.join(parts[part][:DETAIL_MAX_COMPANIES])}")
-
-    show_types = list(
-        dict.fromkeys(
-            s.get("showTypeGroupNm", "")
-            for s in info.get("showTypes", [])
-            if s.get("showTypeGroupNm")
-        )
-    )
-    if show_types:
-        lines.append(f"- 상영타입: {', '.join(show_types)}")
-
-    return "\n".join(lines)
 
 
 @tool(args_schema=KobisInput)
@@ -281,13 +172,13 @@ def kobis_search(
     api_key = os.environ.get("KOBIS_API_KEY")
     if not api_key:
         log.warning("kobis.no_api_key")
-        return _tool_error(
+        return tool_error(
             "MISSING_API_KEY",
             "KOBIS_API_KEY 환경변수가 설정되지 않아 한국 영화 데이터에 접근할 수 없습니다. 대신 web_search를 시도해보세요.",
         )
 
-    if search_type in BOXOFFICE_TYPES and not _is_valid_date(query):
-        return _tool_error(
+    if search_type in BOXOFFICE_TYPES and not is_valid_date(query):
+        return tool_error(
             "INVALID_DATE",
             f"박스오피스 조회 시 query는 실제 존재하는 YYYYMMDD 8자리 날짜여야 합니다. "
             f"받은 값 '{query}'은(는) 유효한 날짜가 아닙니다.",
@@ -324,7 +215,7 @@ def kobis_search(
                 log.info("kobis.empty_result", search_type=search_type, query=query)
                 return f"{query} {label} 데이터가 없습니다."
 
-            period = _format_show_range(result.get("showRange", "")) or query
+            period = format_show_range(result.get("showRange", "")) or query
             lines = [f"{label} ({period})\n"]
             for m in items[:10]:
                 line = (
@@ -360,13 +251,13 @@ def kobis_search(
                         query=query,
                         stage="list",
                     )
-                    return _tool_error(
+                    return tool_error(
                         "MOVIE_NOT_FOUND",
                         f"'{query}'에 해당하는 영화를 KOBIS에서 찾지 못했습니다. "
                         "제목 철자를 확인해 다시 호출하거나 web_search를 사용하세요.",
                     )
 
-                picked = _pick_movie(movies, query)
+                picked = pick_movie(movies, query)
                 movie_cd = picked.get("movieCd", "")
                 log.info(
                     "kobis.detail_resolve",
@@ -402,7 +293,7 @@ def kobis_search(
                     movie_cd=movie_cd,
                     stage="info",
                 )
-                return _tool_error(
+                return tool_error(
                     "MOVIE_NOT_FOUND",
                     f"영화코드 '{movie_cd}'의 상세정보를 가져오지 못했습니다. "
                     "search_type='movie'로 후보를 먼저 확인하세요.",
@@ -411,7 +302,7 @@ def kobis_search(
             log.info(
                 "kobis.success", search_type=search_type, items=1, movie_cd=movie_cd
             )
-            return f"KOBIS 영화 상세정보\n\n{_format_movie_info(info)}{others_note}"
+            return f"KOBIS 영화 상세정보\n\n{format_movie_info(info)}{others_note}"
 
         else:  # movie list
             params = {"key": api_key, "movieNm": query, "itemPerPage": "10"}
@@ -428,7 +319,7 @@ def kobis_search(
             lines = [f"KOBIS 영화 검색 결과: '{query}'\n"]
             for m in movies[:5]:
                 # searchMovieList 응답에는 배우 정보가 없다. 출연진은 search_type='detail'로.
-                open_dt = _fmt_date(m.get("openDt", ""))
+                open_dt = fmt_date(m.get("openDt", ""))
                 directors = ", ".join(
                     d.get("peopleNm", "") for d in m.get("directors", [])
                 )
@@ -451,7 +342,7 @@ def kobis_search(
     # 쿼리 파라미터로 받으므로, str(e)를 로깅하면 키가 평문으로 남는다. 타입만 기록한다.
     except requests.Timeout as e:
         log.warning("kobis.timeout", search_type=search_type, error=type(e).__name__)
-        return _tool_error(
+        return tool_error(
             "TIMEOUT",
             "KOBIS API 응답 시간이 초과되었습니다. 잠시 후 다시 시도하거나 web_search를 사용하세요.",
         )
@@ -461,7 +352,7 @@ def kobis_search(
             search_type=search_type,
             status=e.response.status_code if e.response is not None else None,
         )
-        return _tool_error(
+        return tool_error(
             "HTTP_ERROR",
             f"KOBIS API HTTP 오류 ({e.response.status_code if e.response is not None else 'unknown'}). web_search로 대신 시도해보세요.",
         )
@@ -469,13 +360,13 @@ def kobis_search(
         log.warning(
             "kobis.network_error", search_type=search_type, error=type(e).__name__
         )
-        return _tool_error(
+        return tool_error(
             "NETWORK_ERROR",
             "KOBIS API 호출에 실패했습니다. web_search로 대신 시도해보세요.",
         )
     except (KeyError, ValueError, TypeError) as e:
         log.exception("kobis.parse_error", search_type=search_type)
-        return _tool_error(
+        return tool_error(
             "PARSE_ERROR",
             f"KOBIS 응답 파싱 실패: {e}. web_search로 대신 시도해보세요.",
         )
@@ -507,9 +398,26 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 - 답변은 3~6 문장 또는 짧은 목록 형태로 간결하게 유지하세요.
 - 도구 호출 결과를 그대로 복사하지 말고, 사용자 질문에 맞게 요약/재구성하세요."""
 
-agent = create_agent(
-    model=llm,
-    tools=[imdb_tool, web_tool, kobis_search],
-    system_prompt=SYSTEM_PROMPT,
-    checkpointer=MemorySaver(),
-)
+TOOLS = [imdb_tool, web_tool, kobis_search]
+
+
+def build_agent(checkpointer=None):
+    """체크포인터를 주입받아 에이전트를 만든다.
+
+    호출부마다 필요한 체크포인터가 다르기 때문에 팩토리로 분리했다:
+    - `server.py`: AsyncSqliteSaver — astream_events가 async라 sync 세이버는
+      aput에서 NotImplementedError를 던진다. 파일에 저장해 재시작 후에도 대화가 유지된다.
+    - `imdb_rag.py`: SqliteSaver — CLI는 sync invoke를 쓴다. 같은 DB 파일을 공유한다.
+    - `tests/evals`: MemorySaver — 항목마다 새 thread_id를 쓰므로 영속화가 불필요하고,
+      평가가 실제 대화 DB를 건드리지 않게 격리한다.
+
+    checkpointer를 생략하면 MemorySaver를 쓴다(프로세스 종료 시 소멸).
+    """
+    if checkpointer is None:
+        checkpointer = MemorySaver()
+    return create_agent(
+        model=llm,
+        tools=TOOLS,
+        system_prompt=SYSTEM_PROMPT,
+        checkpointer=checkpointer,
+    )
