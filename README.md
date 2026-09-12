@@ -221,7 +221,9 @@ judge 모드에서는 rubric 기준 1~5점 채점까지 합니다. 종료 코드
 - **도구 입력 검증** — Pydantic 스키마로 `kobis_search` 인자 검증, 잘못된 값 시 LLM이 자가 정정 후 재호출. 박스오피스 날짜는 실제 달력에 존재하는지까지 확인
 - **외부 API 자동 재시도** — KOBIS 호출 실패 시 tenacity로 최대 3회 지수 백오프 재시도, 영구 실패 시 `[TOOL_ERROR code=...]` 표준 포맷으로 LLM에 반환 → web_search 등으로 폴백 유도
 - **도구 상태 표시** — 에이전트가 IMDB 검색 / 한국 개봉 영화 검색 / 웹 검색 중일 때 UI에 실시간 표시
-- **구조화 로깅** — structlog 기반 JSON 로그, 모든 이벤트에 `session_id`/`request_id` 자동 첨부 (`LOG_FORMAT=console`로 개발용 컬러 출력 가능)
+- **구조화 로깅** — structlog 기반 JSON 로그, 모든 이벤트에 `session_id`/`request_id` 자동 첨부 (`LOG_FORMAT=console`로 개발용 컬러 출력 가능). JSON 모드에서도 예외 트레이스백이 보존됩니다
+- **사용자 입력 검증** — 질문 길이(2000자)와 공백-only 입력, `session_id` 형식을 서버에서 제한. 검증 실패는 422 → `INVALID_INPUT`으로 변환해 원인을 사용자에게 알립니다
+- **의미 있는 헬스체크** — `/health`가 에이전트·벡터스토어·API 키를 실제로 확인하고, 서비스 불가(503)와 부분 장애(200 degraded)를 구분합니다
 - **응답 헤더 추적** — `X-Request-Id`, `X-Session-Id`, `X-Cache`(HIT/MISS) 헤더로 요청 추적 가능
 - **테스트 두 층** — 순수 함수 단위 테스트 51개(0.1초, 비용 0)와 에이전트 회귀 평가 14개(LLM-as-judge)를 분리 운영. 테스트를 붙이기 위해 순수 로직을 `kobis_format.py`/`sources.py`로 분리해 `agent.py`의 무거운 초기화 없이 검증합니다
 - **응답 캐싱** — 동일 질문 반복 시 TTLCache(1시간)로 API 비용 절감

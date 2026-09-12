@@ -166,6 +166,35 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 ### 응답 캐싱
 `server.py`는 `cachetools.TTLCache(maxsize=256, ttl=3600)`을 사용합니다. 캐시 키는 `sha256(question.strip().lower())`. **새 세션(`session_id`가 요청에 없는 경우)에만** 캐시를 적용해 대화 컨텍스트가 있는 요청과 충돌하지 않습니다. 에러 응답은 캐시하지 않습니다.
 
+### 사용자 입력 검증 (`QuestionRequest`)
+`server.py`의 요청 모델이 Pydantic으로 입력을 제한합니다. 도구 인자(`KobisInput`)는 엄격히
+검증하면서 정작 사용자 입력은 무검증이던 역전 구조를 바로잡은 것입니다.
+
+- `question`: `min_length=1`, `max_length=MAX_QUESTION_CHARS`(2000), 그리고 `field_validator`로
+  strip 후 빈 값 거부. **`min_length=1`만으로는 `"   "` 같은 공백 입력을 걸러내지 못합니다.**
+- `session_id`: `max_length=64` + `^[A-Za-z0-9_-]+$`. 이 값이 그대로 `thread_id`가 되어
+  체크포인터의 **영구 키**가 되므로 임의 문자열이 들어오면 안 됩니다.
+
+검증 실패는 FastAPI가 **422**로 응답합니다. `web/app/api/chat/route.ts`가 이를 `INVALID_INPUT`
+코드로 변환해 사용자에게 이유를 보여주고, 프론트는 재시도 버튼을 띄우지 않습니다
+(같은 입력을 다시 보내도 실패하므로). 입력창에도 `maxLength`가 걸려 있어 정상 경로에서는
+애초에 발생하지 않습니다 — **두 값(2000)을 바꿀 때는 양쪽을 함께 고쳐야 합니다.**
+
+### 헬스체크 (`/health`)
+의존성을 실제로 확인하고 **치명적 문제와 부분 장애를 구분**합니다.
+
+| 구분 | 항목 | 실패 시 |
+|---|---|---|
+| 치명적 | `agent` 준비, `vectorstore` 비어있지 않음, `OPENAI_API_KEY` | **503** `unhealthy` |
+| 선택 | `KOBIS_API_KEY`, `TAVILY_API_KEY` | 200 `degraded` |
+
+KOBIS/Tavily 키가 없어도 503을 주면 안 됩니다. 해당 도구만 `[TOOL_ERROR]`를 반환하고
+LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여기서 503을 주면 Railway가
+배포를 실패로 판정합니다.
+
+**네트워크 호출은 하지 않습니다.** 헬스체크가 외부 API 장애에 물려 같이 죽으면
+멀쩡한 서버가 재시작 루프에 빠집니다.
+
 ### 레이트 리미팅
 `slowapi`로 `/api/chat` 엔드포인트에 IP당 분당 10회 제한이 적용됩니다. 초과 시 429 응답을 반환합니다. `@limiter.limit("10/minute")` 데코레이터가 적용되며, FastAPI의 `Request` 객체가 첫 번째 파라미터로 필요합니다.
 
@@ -179,6 +208,13 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 - 모든 로그는 `stderr`로 출력되어 uvicorn 표준 로그와 섞이지 않음
 
 `print()` 사용은 금지. 새 코드는 `from logging_config import get_logger; log = get_logger("module_name")`을 사용해야 합니다.
+
+> **프로세서 체인을 수정할 때 주의**: JSON 경로에는 `format_exc_info`가 렌더러 **앞에** 있어야 합니다.
+> `JSONRenderer`는 `exc_info`를 해석하지 못해 `"exc_info": true` 한 줄만 남기고 트레이스백을
+> 통째로 버립니다. 반대로 `ConsoleRenderer`는 예외를 자체 처리하므로 console 경로에
+> `format_exc_info`를 넣으면 그 처리를 가로챕니다. 그래서 두 경로를 분기해 둡니다.
+> 이걸 놓치면 `log.exception()`이 로컬(console)에서는 멀쩡하고 프로덕션(json)에서만
+> 스택을 잃는, 가장 추적하기 어려운 형태가 됩니다.
 
 > **예외를 로깅할 때 `str(e)`를 그대로 넣지 말 것.** KOBIS는 API 키를 쿼리 파라미터로 받는데 `requests` 예외의 `str()`에는 요청 URL 전문이 들어간다. 실제로 `error=str(e)`가 네트워크 장애 시 키를 평문으로 기록하고 있었고, 지금은 `error=type(e).__name__`으로 바꿔 타입만 남긴다. 외부 API 예외를 새로 다룰 때도 같은 원칙을 지킬 것.
 

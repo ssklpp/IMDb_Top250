@@ -39,6 +39,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // 백엔드 Pydantic 검증 실패(질문 길이/빈 값, session_id 형식)는 422로 온다.
+  // 그대로 BACKEND_ERROR로 넘기면 "서버 오류"로 보여 원인을 알 수 없다.
+  if (res.status === 422) {
+    return new Response(
+      JSON.stringify({
+        code: "INVALID_INPUT",
+        error: "질문 형식이 올바르지 않습니다. 너무 길거나 비어있지 않은지 확인해주세요.",
+      }),
+      { status: 422, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
   if (!res.ok) {
     return new Response(
       JSON.stringify({

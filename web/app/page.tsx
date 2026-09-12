@@ -25,6 +25,8 @@ const SESSION_KEY = "movie-chat-session-id";
 const MESSAGES_KEY = "movie-chat-messages";
 // localStorage는 보통 5MB 제한이라 무한히 쌓지 않는다.
 const MAX_STORED_MESSAGES = 50;
+// server.py의 MAX_QUESTION_CHARS와 맞춘다. 백엔드가 422로 거절하기 전에 입력 단계에서 막는다.
+const MAX_QUESTION_CHARS = 2000;
 
 const EXAMPLE_QUESTIONS = [
   "IMDB Top 250 평점 1위 영화는?",
@@ -55,6 +57,10 @@ function errorLabel(code: string | null | undefined, fallback: string): string {
       return "⚠ " + fallback;
     case "NETWORK":
       return "🌐 " + fallback;
+    // 입력 자체가 잘못된 경우라 재시도 대상이 아니다(RETRYABLE_CODES에 없음).
+    case "INVALID_INPUT":
+    case "EMPTY_QUESTION":
+      return "✏️ " + fallback;
     default:
       return fallback;
   }
@@ -484,6 +490,7 @@ export default function Home() {
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
+            maxLength={MAX_QUESTION_CHARS}
             placeholder="영화에 대해 질문해보세요..."
             className="flex-1 px-4 py-2 sm:py-3 text-base sm:text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
           />

@@ -37,11 +37,18 @@ def configure_logging() -> None:
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
     ]
-    processors.append(
-        structlog.dev.ConsoleRenderer()
-        if use_console
-        else structlog.processors.JSONRenderer()
-    )
+
+    if use_console:
+        # ConsoleRenderer는 exc_info를 자체적으로 예쁘게 렌더링한다.
+        # 앞에 format_exc_info를 두면 그 처리를 가로채므로 넣지 않는다.
+        processors.append(structlog.dev.ConsoleRenderer())
+    else:
+        # JSONRenderer는 exc_info를 해석하지 못해 `"exc_info": true` 한 줄만 남기고
+        # 트레이스백을 통째로 버린다. 그 결과 log.exception()이 console(로컬)에서는
+        # 멀쩡하고 json(프로덕션 기본값)에서만 스택을 잃는다 — 정작 장애가 난 곳에서
+        # 추적이 안 되는 최악의 형태라, 렌더링 전에 문자열로 펼쳐 둔다.
+        processors.append(structlog.processors.format_exc_info)
+        processors.append(structlog.processors.JSONRenderer())
 
     structlog.configure(
         processors=processors,

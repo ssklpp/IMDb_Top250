@@ -9,17 +9,17 @@ from pathlib import Path
 
 import aiosqlite
 from cachetools import TTLCache
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from agent import CHECKPOINT_DB_PATH, build_agent
+from agent import CHECKPOINT_DB_PATH, build_agent, vectorstore
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
 from sources import extract_sources
 
@@ -27,6 +27,11 @@ configure_logging()
 log = get_logger("server")
 
 REQUEST_TIMEOUT_S = 120
+
+# 영화 질문은 길 이유가 없다. 넉넉히 잡되 상한은 둔다.
+MAX_QUESTION_CHARS = 2000
+# UUID(36자)가 정상 경로. 여유를 두되 무한정 긴 키가 들어오는 것은 막는다.
+MAX_SESSION_ID_CHARS = 64
 
 
 @asynccontextmanager
@@ -69,8 +74,27 @@ _response_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
 
 
 class QuestionRequest(BaseModel):
-    question: str
-    session_id: str | None = None
+    """사용자 입력 검증.
+
+    도구 인자(KobisInput)는 엄격히 검증하면서 정작 사용자 입력은 무검증이던
+    역전 구조를 바로잡는다. 제한이 없으면 빈 질문이 그대로 LLM 호출까지 가고,
+    거대한 입력이 레이트리밋 안에서도 OpenAI 비용 공격이 된다.
+    """
+
+    question: str = Field(..., min_length=1, max_length=MAX_QUESTION_CHARS)
+    # thread_id로 그대로 쓰여 체크포인터의 영구 키가 되므로 길이와 문자를 제한한다.
+    session_id: str | None = Field(
+        None, min_length=1, max_length=MAX_SESSION_ID_CHARS, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+
+    @field_validator("question")
+    @classmethod
+    def _strip_question(cls, v: str) -> str:
+        # min_length=1은 "   " 같은 공백만 있는 입력을 걸러내지 못한다.
+        v = v.strip()
+        if not v:
+            raise ValueError("질문이 비어있습니다.")
+        return v
 
 
 def _error_sentinel(code: str, message: str) -> str:
@@ -79,8 +103,55 @@ def _error_sentinel(code: str, message: str) -> str:
 
 
 @app.get("/health")
-async def health():
-    return {"status": "ok"}
+async def health(response: Response):
+    """의존성을 실제로 확인한다.
+
+    이전에는 무조건 {"status":"ok"}를 반환해 프로세스 생존만 보장했다.
+    railway.toml의 healthcheckPath가 이걸 신뢰하는데, API 키가 빠지거나
+    벡터스토어가 비어 있어도 계속 ok를 주고 있었다.
+
+    치명적 문제와 부분 장애를 구분한다:
+    - 에이전트 미준비 / 벡터스토어 비어있음 / OPENAI_API_KEY 없음 → 503 (서비스 불가)
+    - KOBIS·Tavily 키 없음 → 200 degraded (해당 도구만 실패하고 LLM이 우회한다)
+
+    네트워크 호출은 하지 않는다. 헬스체크가 외부 API 장애에 물려 같이 죽으면 안 된다.
+    """
+    agent_ready = getattr(app.state, "agent", None) is not None
+    try:
+        vector_count = int(vectorstore.index.ntotal)
+    except Exception:
+        vector_count = 0
+
+    critical = {
+        "agent": agent_ready,
+        "vectorstore": vector_count > 0,
+        "openai_key": bool(os.environ.get("OPENAI_API_KEY")),
+    }
+    optional = {
+        "kobis_key": bool(os.environ.get("KOBIS_API_KEY")),
+        "tavily_key": bool(os.environ.get("TAVILY_API_KEY")),
+    }
+
+    if not all(critical.values()):
+        status = "unhealthy"
+        response.status_code = 503
+    elif not all(optional.values()):
+        status = "degraded"
+    else:
+        status = "ok"
+
+    if status != "ok":
+        log.warning(
+            "health.not_ok",
+            status=status,
+            failed=[k for k, v in {**critical, **optional}.items() if not v],
+        )
+
+    return {
+        "status": status,
+        "checks": {**critical, **optional},
+        "vectorstore_chunks": vector_count,
+    }
 
 
 @app.post("/api/chat")
