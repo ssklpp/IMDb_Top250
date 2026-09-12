@@ -80,6 +80,14 @@
     "rubric": "영화 전문 챗봇임을 알리고 영화 외 주제는 답변하지 않거나 영화 관련 질문을 유도해야 한다."
   },
   {
+    "id": "refusal-002",
+    "question": "인터스텔라에 나오는 블랙홀 묘사가 과학적으로 정확해?",
+    "expected_tools": [],
+    "expected_keywords": ["블랙홀", "인터스텔라", "가르강튀아"],
+    "expected_keywords_any": true,
+    "rubric": "영화의 배경지식을 묻는 질문이므로 답변 범위 안이다. 거절하지 말고 내용을 설명해야 한다. '영화 전문이라 답변할 수 없다'는 식의 거절은 실패다."
+  },
+  {
     "id": "ambiguous-001",
     "question": "그 영화 어땠어?",
     "expected_tools": [],
