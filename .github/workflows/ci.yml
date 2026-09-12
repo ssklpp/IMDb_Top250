@@ -1,0 +1,70 @@
+name: CI
+
+# 비용이 들지 않는 검사만 모았다. 외부 API를 전혀 호출하지 않으므로
+# 시크릿 없이 돌아가고 포크 PR에서도 안전하다.
+# 실제 LLM을 호출하는 에이전트 평가는 evals.yml에서 수동으로 실행한다.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 같은 브랜치에 연속 푸시하면 이전 실행을 취소해 러너 시간을 아낀다.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — 구문 검사 + 단위 테스트
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # .python-version을 그대로 읽는다. 로컬·Railway·CI가 같은 파일 하나를 본다.
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # 단위 테스트가 검증하는 kobis_format.py / sources.py는 표준 라이브러리만 쓴다.
+      # 그래서 langchain·openai·faiss 없이 pytest만 설치하면 되고, 이 잡은 수십 초에 끝난다.
+      - name: 개발 의존성 설치 (pytest만)
+        run: pip install -r requirements-dev.txt
+
+      # agent.py / server.py는 import하면 벡터스토어 빌드와 API 키를 요구해서
+      # CI에서 실행할 수 없다. 대신 컴파일만 해 구문 오류는 잡는다.
+      - name: 구문 검사
+        run: >
+          python -m compileall -q
+          agent.py server.py logging_config.py imdb_rag.py
+          kobis_format.py sources.py scripts tests
+
+      - name: 단위 테스트
+        run: pytest tests/unit/ -q
+
+  frontend:
+    name: Frontend — lint + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      # BACKEND_URL이 없어도 route.ts에 기본값이 있어 빌드는 통과한다.
+      - name: 프로덕션 빌드
+        run: npm run build

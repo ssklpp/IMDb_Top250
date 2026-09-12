@@ -40,6 +40,28 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 **코드를 고쳤으면 `pytest tests/unit/`를 먼저 돌릴 것.** 0.1초면 끝나고 비용이 없다.
 평가(`tests/evals`)는 실제 LLM·도구를 호출하므로 `--skip-judge`를 줘도 비용이 든다.
 
+### CI (`.github/workflows/`)
+
+| 파일 | 트리거 | 내용 | 비용 |
+|---|---|---|---|
+| `ci.yml` | 모든 push·PR | 구문 검사 + 단위 테스트 + 프론트 lint·build | **0** |
+| `evals.yml` | `workflow_dispatch` (수동) | 에이전트 회귀 평가 14개 | 발생 |
+
+**둘을 나눈 기준은 비용이다.** `ci.yml`은 외부 API를 전혀 호출하지 않아 시크릿 없이 돌고
+포크 PR에서도 안전하다. 이게 가능한 이유는 단위 테스트 대상(`kobis_format.py`, `sources.py`)이
+표준 라이브러리만 쓰도록 분리돼 있어 **pytest만 설치하면 되기 때문**이다
+(`requirements-dev.txt`만 설치, langchain·openai·faiss 불필요).
+
+`agent.py`/`server.py`는 import만 해도 벡터스토어 빌드와 API 키를 요구해 CI에서 실행할 수
+없다. 대신 `compileall`로 구문 오류만 잡는다.
+
+주의사항:
+- **`.python-version`을 `setup-python`이 읽는다.** 로컬·Railway·CI가 같은 파일 하나를 본다.
+- `evals.yml`은 `vectorstore`를 **PDF 해시로 캐시**한다. 청크 파라미터(`chunk_size` 등)를
+  바꾸면 캐시가 낡으므로 캐시 키의 `vectorstore-v1`을 `v2`로 올릴 것.
+- 평가를 자동 실행하려면 `evals.yml`의 주석 처리된 `push`/`schedule` 트리거를 풀면 되지만,
+  **실행마다 과금된다.**
+
 ## 의존성 관리
 
 **Python 버전과 패키지 버전이 로컬과 Railway에서 동일하도록 고정돼 있다.** 이 구조를 깨뜨리지 말 것.

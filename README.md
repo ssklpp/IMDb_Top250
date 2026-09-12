@@ -1,5 +1,7 @@
 # IMDB Top 250 AI 영화 챗봇
 
+[![CI](https://github.com/ssklpp/IMDb_Top250/actions/workflows/ci.yml/badge.svg)](https://github.com/ssklpp/IMDb_Top250/actions/workflows/ci.yml)
+
 https://im-db-top250.vercel.app/
 
 IMDB Top 250 영화 PDF 검색(RAG), KOBIS 한국 영화 데이터베이스, Tavily 웹 검색을 결합한 LangGraph 에이전트 기반 영화 전문가 챗봇입니다.  
@@ -206,6 +208,22 @@ judge 모드에서는 rubric 기준 1~5점 채점까지 합니다. 종료 코드
 
 > judge 호출이 실패하면 해당 항목을 **통과가 아니라 실패로** 처리합니다. 예전에는 점수가 비면
 > 자동 통과되어 평가가 조용히 무력화되는 구조였습니다.
+
+### CI
+
+두 워크플로로 나뉩니다. **기준은 비용**입니다.
+
+| 워크플로 | 트리거 | 내용 | 비용 |
+|---|---|---|---|
+| `ci.yml` | 모든 push·PR | 구문 검사 + 단위 테스트 51개 + 프론트 lint·build | **0** |
+| `evals.yml` | 수동 실행 | 에이전트 회귀 평가 14개 | 발생 |
+
+`ci.yml`이 시크릿 없이 수십 초에 끝나는 건 우연이 아닙니다. 테스트 대상인
+`kobis_format.py`와 `sources.py`가 표준 라이브러리만 쓰도록 분리해 둔 덕분에
+**langchain·openai·faiss를 설치하지 않고 pytest만으로** 돌아갑니다.
+
+평가는 실제 LLM을 호출하므로 수동(`workflow_dispatch`)이 기본입니다. 벡터스토어를
+PDF 해시로 캐시해 임베딩 재생성 비용이 반복되지 않게 했습니다.
 
 ## 특징
 
