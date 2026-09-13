@@ -44,6 +44,110 @@ jobs:
       - name: 단위 테스트
         run: pytest tests/unit/ -q
 
+  deps:
+    name: 프로덕션 의존성 — 배포 환경에서 설치되는지
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Railway(nixpacks)와 같은 조건: linux x86_64 + .python-version의 3.13.
+      # 여기서 통과하면 배포 빌드의 설치 단계도 통과한다.
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # requirements.in에 패키지를 추가하고 락 재생성을 잊는 것이 가장 흔한 실수다.
+      # 설치보다 먼저 확인해 빠르게 실패시킨다.
+      - name: 락이 requirements.in과 어긋나지 않았는지
+        run: |
+          python - <<'EOF'
+          import re, sys
+          from pathlib import Path
+
+          def parse(path):
+              out = {}
+              for line in Path(path).read_text(encoding="utf-8").splitlines():
+                  line = line.strip()
+                  if not line or line.startswith("#"):
+                      continue
+                  name, _, ver = line.partition("==")
+                  out[re.sub(r"[-_.]+", "-", name).lower()] = ver
+              return out
+
+          src, lock = parse("requirements.in"), parse("requirements.txt")
+          problems = []
+          for name, ver in src.items():
+              if name not in lock:
+                  problems.append(f"{name}: requirements.in에 있으나 락에 없음")
+              elif ver and lock[name] != ver:
+                  problems.append(f"{name}: .in은 {ver}, 락은 {lock[name]}")
+
+          if problems:
+              for p in problems:
+                  print(f"::error::{p}")
+              print("::error::`python scripts/gen_lock.py`로 락을 재생성한 뒤 함께 커밋하세요.")
+              sys.exit(1)
+          print(f"OK — 직접 의존성 {len(src)}개가 락 {len(lock)}개와 일치")
+          EOF
+
+      # Railway가 실행하는 것과 같은 명령. 여기서 깨지면 배포도 깨진다.
+      - name: 프로덕션 의존성 설치
+        run: pip install -r requirements.txt
+
+      # 설치 성공과 실제 사용 가능은 다르다. 앱이 기동 시 import하는 서드파티를
+      # 직접 불러 확인한다. AsyncSqliteSaver는 별도 패키지라 특히 빠지기 쉽다.
+      - name: 핵심 패키지 import 확인
+        run: |
+          python - <<'EOF'
+          import importlib, sys
+
+          targets = [
+              ("fastapi", None),
+              ("uvicorn", None),
+              ("slowapi", "Limiter"),
+              ("cachetools", "TTLCache"),
+              ("structlog", None),
+              ("tenacity", "retry"),
+              ("requests", None),
+              ("aiosqlite", None),
+              ("faiss", None),
+              ("pydantic", "BaseModel"),
+              ("langchain.agents", "create_agent"),
+              ("langchain_openai", "ChatOpenAI"),
+              ("langchain_tavily", "TavilySearch"),
+              ("langchain_text_splitters", "RecursiveCharacterTextSplitter"),
+              ("langchain_community.vectorstores", "FAISS"),
+              ("langchain_community.document_loaders", "PyMuPDFLoader"),
+              ("langchain_core.tools", "tool"),
+              ("langgraph.checkpoint.memory", "MemorySaver"),
+              ("langgraph.checkpoint.sqlite", "SqliteSaver"),
+              ("langgraph.checkpoint.sqlite.aio", "AsyncSqliteSaver"),
+          ]
+
+          failed = []
+          for mod, attr in targets:
+              try:
+                  m = importlib.import_module(mod)
+                  if attr and not hasattr(m, attr):
+                      failed.append(f"{mod}.{attr} 없음")
+              except Exception as e:
+                  failed.append(f"{mod}: {type(e).__name__}: {e}")
+
+          for f in failed:
+              print(f"::error::{f}")
+          if failed:
+              sys.exit(1)
+          print(f"OK — {len(targets)}개 모듈 import 확인")
+          EOF
+
+      # 앱 모듈(agent.py)은 import만 해도 벡터스토어를 빌드하려 해서 CI에서 실행할 수 없다.
+      # 외부 의존이 없는 모듈만 실제로 불러 본다.
+      - name: 자체 모듈 import 확인
+        run: python -c "import kobis_format, sources, logging_config; print('OK')"
+
   frontend:
     name: Frontend — lint + build
     runs-on: ubuntu-latest

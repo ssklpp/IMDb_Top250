@@ -42,18 +42,35 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 
 ### CI (`.github/workflows/`)
 
-| 파일 | 트리거 | 내용 | 비용 |
+| 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | 모든 push·PR | 구문 검사 + 단위 테스트 + 프론트 lint·build | **0** |
-| `evals.yml` | `workflow_dispatch` (수동) | 에이전트 회귀 평가 14개 | 발생 |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 51개 (pytest만 설치) | **0** |
+| `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** | **0** |
+| `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
+| `evals.yml` | — | 에이전트 회귀 평가 14개 (`workflow_dispatch` 수동) | 발생 |
 
-**둘을 나눈 기준은 비용이다.** `ci.yml`은 외부 API를 전혀 호출하지 않아 시크릿 없이 돌고
-포크 PR에서도 안전하다. 이게 가능한 이유는 단위 테스트 대상(`kobis_format.py`, `sources.py`)이
-표준 라이브러리만 쓰도록 분리돼 있어 **pytest만 설치하면 되기 때문**이다
-(`requirements-dev.txt`만 설치, langchain·openai·faiss 불필요).
+### `deps` 잡이 막는 것
+Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 7커밋 뒤처진 채로 돌고 있었는데,
+빌드가 실패해도 이전 Active 배포가 유지되어 겉으로는 정상으로 보였다.
+
+- `ubuntu-latest` + `.python-version`(3.13) — **nixpacks가 쓰는 것과 같은 조건**
+- `pip install -r requirements.txt` — Railway가 실행하는 것과 같은 명령
+- 서드파티 20개를 실제로 import — 설치 성공과 사용 가능은 다르다.
+  특히 `AsyncSqliteSaver`는 `langgraph-checkpoint-sqlite`라는 **별도 패키지**라 빠지기 쉽다.
+- `requirements.in`과 락의 드리프트 검사 — `.in`에 추가하고 `gen_lock.py`를 잊는 실수를 막는다
+
+### 두 워크플로를 나눈 기준은 비용
+`ci.yml`은 **외부 API를 전혀 호출하지 않아** 시크릿 없이 돌고 포크 PR에서도 안전하다.
+`evals.yml`만 실제 LLM을 부르므로 수동 실행이다.
+
+`python` 잡이 수십 초에 끝나는 건 단위 테스트 대상(`kobis_format.py`, `sources.py`)이
+표준 라이브러리만 쓰도록 분리돼 있어 **pytest만 설치하면 되기 때문**이다.
+반면 `deps` 잡은 락 79개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
+병렬로 돌아 전체 소요 시간은 크게 늘지 않는다.
 
 `agent.py`/`server.py`는 import만 해도 벡터스토어 빌드와 API 키를 요구해 CI에서 실행할 수
-없다. 대신 `compileall`로 구문 오류만 잡는다.
+없다. `python` 잡은 `compileall`로 구문 오류만 잡고, `deps` 잡은 서드파티를 직접 import해
+패키지가 실제로 쓸 수 있는 상태인지 확인한다.
 
 주의사항:
 - **`.python-version`을 `setup-python`이 읽는다.** 로컬·Railway·CI가 같은 파일 하나를 본다.
