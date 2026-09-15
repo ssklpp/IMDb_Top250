@@ -6,8 +6,9 @@ RAG 답변이 어디서 왔는지 사용자가 확인할 수 있어야 환각과
 - imdb_search : ToolMessage.artifact 가 list[Document]. PDF 쪽번호를 쓴다.
                 (agent.py에서 response_format="content_and_artifact"로 설정해야
                  artifact가 채워진다. 기본값 "content"면 메타데이터가 버려진다)
-- web_search  : Tavily는 artifact를 채우지 않고 content에 JSON 문자열을 넣는다.
+- web_search  : content가 format_web_results()가 만든 JSON 문자열이다.
                 파싱해서 실제 URL을 꺼낸다 — 유일하게 클릭 가능한 출처다.
+                만드는 쪽과 읽는 쪽이 어긋나면 출처가 조용히 사라지므로 같은 모듈에 둔다.
 - kobis_search: 문자열만 반환하므로 URL이 없다. 기관명을 고정 출처로 붙인다.
 
 외부 의존이 없는 순수 함수라 tests/unit에서 API 호출 없이 검증한다.
@@ -18,6 +19,39 @@ import json
 KOBIS_HOME = "https://www.kobis.or.kr"
 
 MAX_SOURCES_PER_TOOL = 4
+
+# 검색 결과 하나의 본문 상한. Tavily basic 검색의 content는 보통 짧은 발췌지만,
+# 가끔 긴 본문이 섞이면 결과 5개가 그대로 LLM 입력 토큰이 된다.
+WEB_MAX_CONTENT_CHARS = 1000
+
+
+def format_web_results(raw) -> str | None:
+    """Tavily 검색 응답을 LLM에 넘길 JSON 문자열로 줄인다. 쓸 결과가 없으면 None.
+
+    답변에 쓰이는 title·url·content만 남기고 score·raw_content·images·
+    response_time·request_id 같은 필드는 버린다. 결과 형태는 _web_sources()가
+    파싱하는 형태({"results": [{"title", "url", ...}]})와 반드시 같아야 한다.
+    """
+    results = raw.get("results") if isinstance(raw, dict) else None
+    if not isinstance(results, list):
+        return None
+
+    slim: list[dict] = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        url = r.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        title = r.get("title") if isinstance(r.get("title"), str) else ""
+        content = r.get("content") if isinstance(r.get("content"), str) else ""
+        slim.append(
+            {"title": title, "url": url, "content": content[:WEB_MAX_CONTENT_CHARS]}
+        )
+
+    if not slim:
+        return None
+    return json.dumps({"results": slim}, ensure_ascii=False)
 
 
 def _imdb_sources(artifact) -> list[dict]:

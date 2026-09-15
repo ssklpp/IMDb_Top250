@@ -117,7 +117,6 @@ jobs:
               ("pydantic", "BaseModel"),
               ("langchain.agents", "create_agent"),
               ("langchain_openai", "ChatOpenAI"),
-              ("langchain_tavily", "TavilySearch"),
               ("langchain_text_splitters", "RecursiveCharacterTextSplitter"),
               ("langchain_community.vectorstores", "FAISS"),
               ("langchain_community.document_loaders", "PyMuPDFLoader"),

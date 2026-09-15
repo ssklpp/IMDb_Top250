@@ -13,7 +13,6 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.tools import tool
 from langchain_core.tools.retriever import create_retriever_tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_tavily import TavilySearch
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel, Field, field_validator
@@ -34,6 +33,7 @@ from kobis_format import (
     tool_error,
 )
 from logging_config import get_logger
+from sources import format_web_results
 
 log = get_logger("agent")
 
@@ -49,6 +49,11 @@ CHECKPOINT_DB_PATH = os.environ.get(
 KOBIS_TIMEOUT = 10
 KOBIS_MAX_ATTEMPTS = 3
 KOBIS_BASE = "https://www.kobis.or.kr/kobisopenapi/webservice/rest"
+
+TAVILY_URL = "https://api.tavily.com/search"
+WEB_TIMEOUT = 15
+WEB_MAX_ATTEMPTS = 2
+WEB_MAX_RESULTS = 5
 
 # 박스오피스 계열 모드. daily는 별도 엔드포인트, 나머지는 weekGb로 구분.
 BOXOFFICE_TYPES = ("daily", "weekly", "weekend", "weekday")
@@ -89,11 +94,78 @@ imdb_tool = create_retriever_tool(
     response_format="content_and_artifact",
 )
 
-web_tool = TavilySearch(
-    max_results=5,
-    name="web_search",
-    description="인터넷에서 최신 영화 정보를 검색합니다. PDF에 없는 신작, 박스오피스, 최신 수상 내역 등을 찾을 때 사용하세요.",
+
+# web_search는 langchain_tavily.TavilySearch를 쓰지 않고 Tavily API를 직접 호출한다.
+# - TavilySearch는 LLM에 파라미터 9개(include_domains, time_range 등)를 노출해 도구 정의만
+#   1,521토큰이었다. 도구 정의는 LLM 호출마다 전송되고 질문 하나에 호출이 2번이라,
+#   약 3,000토큰이 쓰지도 않는 설명문에 나갔다. query 하나만 받게 줄였다.
+# - TavilySearch는 생성 시점에 TAVILY_API_KEY를 요구해 키가 없으면 import부터 실패했다.
+#   헬스체크는 이 키를 선택 사항(degraded)으로 설계했는데 실제로는 서버가 뜨지 않았다.
+# - 동기 경로의 requests.post에 timeout이 없었다.
+# 기존 도구를 이 함수 안에서 invoke()로 감싸면 안 된다. 중첩 도구 이벤트가 발생해
+# "검색 중" 표시와 tool_calls 집계가 두 번씩 잡힌다.
+@retry(
+    # Tavily는 호출마다 크레딧을 쓴다. HTTP 오류(401·429 등)는 다시 보내도 결과가 같으므로
+    # 연결 문제만, 그리고 KOBIS(3회)보다 적게 재시도한다.
+    retry=retry_if_exception_type((requests.Timeout, requests.ConnectionError)),
+    stop=stop_after_attempt(WEB_MAX_ATTEMPTS),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
+    reraise=True,
 )
+def _tavily_search(api_key: str, query: str) -> dict:
+    resp = requests.post(
+        TAVILY_URL,
+        json={"query": query, "max_results": WEB_MAX_RESULTS, "search_depth": "basic"},
+        # 키는 헤더로 보내므로 KOBIS와 달리 예외 메시지(URL)에 섞이지 않는다.
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=WEB_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+@tool
+def web_search(query: str) -> str:
+    """인터넷에서 최신 영화 정보를 검색합니다. PDF에 없는 신작, 박스오피스, 최신 수상 내역 등을 찾을 때 사용하세요."""
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        log.warning("web.no_api_key")
+        return tool_error(
+            "MISSING_API_KEY",
+            "TAVILY_API_KEY 환경변수가 설정되지 않아 웹 검색을 할 수 없습니다. "
+            "imdb_search나 kobis_search로 확인할 수 있는 범위에서 답하세요.",
+        )
+
+    query = query.strip()
+    if not query:
+        return tool_error("INVALID_QUERY", "검색어가 비어 있습니다. 검색어를 넣어 다시 호출하세요.")
+
+    # 검색어는 사용자 질문에서 파생되므로 본문 대신 길이만 남긴다.
+    log.info("web.request", query_len=len(query))
+    try:
+        raw = _tavily_search(api_key, query)
+    except requests.Timeout as e:
+        log.warning("web.timeout", error=type(e).__name__)
+        return tool_error("TIMEOUT", "웹 검색 응답 시간이 초과되었습니다. 잠시 후 다시 시도하세요.")
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else None
+        log.warning("web.http_error", status=status)
+        return tool_error("HTTP_ERROR", f"웹 검색 API HTTP 오류 ({status or 'unknown'}).")
+    # requests.JSONDecodeError는 RequestException의 하위 클래스라 먼저 잡아야 한다.
+    except requests.JSONDecodeError as e:
+        log.warning("web.parse_error", error=type(e).__name__)
+        return tool_error("PARSE_ERROR", "웹 검색 응답을 해석하지 못했습니다.")
+    except requests.RequestException as e:
+        log.warning("web.network_error", error=type(e).__name__)
+        return tool_error("NETWORK_ERROR", "웹 검색 API 호출에 실패했습니다.")
+
+    formatted = format_web_results(raw)
+    if formatted is None:
+        log.info("web.empty_result")
+        return f"'{query}'에 대한 웹 검색 결과가 없습니다."
+
+    log.info("web.success", items=len(raw.get("results", [])))
+    return formatted
 
 
 class KobisInput(BaseModel):
@@ -405,7 +477,7 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 
 ## 도구 에러 처리
 - 도구 응답이 `[TOOL_ERROR code=...]`로 시작하면 도구 실패를 의미합니다.
-- `INVALID_DATE`, 또는 인자 검증 오류(허용되지 않는 search_type, 4자리가 아닌 연도 등): 인자를 고쳐서 같은 도구를 다시 호출하세요.
+- `INVALID_DATE`/`INVALID_QUERY`, 또는 인자 검증 오류(허용되지 않는 search_type, 4자리가 아닌 연도 등): 인자를 고쳐서 같은 도구를 다시 호출하세요.
 - `MISSING_API_KEY`/`TIMEOUT`/`NETWORK_ERROR`/`HTTP_ERROR`/`PARSE_ERROR`: 다른 도구(web_search 등)로 우회하세요.
 - `MOVIE_NOT_FOUND`: 제목 철자를 고쳐 다시 호출하거나 search_type='movie'로 후보를 먼저 확인하세요. 그래도 없으면 web_search로 우회하세요.
 - 모든 도구가 실패하면 사용자에게 솔직하게 알리세요.
@@ -417,7 +489,7 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 - 답변은 3~6 문장 또는 짧은 목록 형태로 간결하게 유지하세요.
 - 도구 호출 결과를 그대로 복사하지 말고, 사용자 질문에 맞게 요약/재구성하세요."""
 
-TOOLS = [imdb_tool, web_tool, kobis_search]
+TOOLS = [imdb_tool, web_search, kobis_search]
 
 
 def build_agent(checkpointer=None):

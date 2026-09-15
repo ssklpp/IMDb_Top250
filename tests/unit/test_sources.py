@@ -6,7 +6,15 @@
 
 import json
 
-from sources import KOBIS_HOME, MAX_SOURCES_PER_TOOL, extract_sources
+import pytest
+
+from sources import (
+    KOBIS_HOME,
+    MAX_SOURCES_PER_TOOL,
+    WEB_MAX_CONTENT_CHARS,
+    extract_sources,
+    format_web_results,
+)
 
 
 class _Doc:
@@ -62,7 +70,7 @@ class TestWebSources:
         return _ToolMessage(content=json.dumps({"query": "q", "results": results}))
 
     def test_URL과_제목을_뽑는다(self):
-        """Tavily는 artifact를 안 채우고 content에 JSON 문자열을 넣는다."""
+        """web_search는 artifact를 안 채우고 content에 JSON 문자열을 넣는다."""
         out = extract_sources(
             "web_search",
             self._tavily(
@@ -97,6 +105,56 @@ class TestWebSources:
 
     def test_results가_없으면_빈_결과(self):
         assert extract_sources("web_search", _ToolMessage(content='{"query":"q"}')) == []
+
+
+class TestFormatWebResults:
+    """web_search 도구가 LLM에 넘기는 형태. 출처 추출이 이 형태를 파싱한다."""
+
+    # 실제 Tavily 응답에서 확인한 필드 구성
+    RAW = {
+        "query": "봉준호 신작",
+        "follow_up_questions": None,
+        "answer": None,
+        "images": [],
+        "results": [
+            {
+                "url": "https://a.com/news",
+                "title": "봉준호 신작 소식",
+                "content": "본문 발췌",
+                "score": 0.91,
+                "raw_content": None,
+                "id": "r1",
+            }
+        ],
+        "response_time": 1.23,
+        "request_id": "abc",
+    }
+
+    def test_출처_추출과_형태가_맞물린다(self):
+        """만드는 쪽과 읽는 쪽이 어긋나면 에러 없이 출처 칩만 사라진다. 그 회귀를 잡는다."""
+        out = extract_sources("web_search", _ToolMessage(content=format_web_results(self.RAW)))
+        assert out == [{"tool": "web_search", "label": "봉준호 신작 소식", "url": "https://a.com/news"}]
+
+    def test_답변에_쓰이지_않는_필드는_버린다(self):
+        """score·raw_content·images·response_time 등은 LLM 입력 토큰만 늘린다."""
+        data = json.loads(format_web_results(self.RAW))
+        assert list(data) == ["results"]
+        assert list(data["results"][0]) == ["title", "url", "content"]
+
+    def test_긴_본문은_상한까지_자른다(self):
+        raw = {"results": [{"url": "https://a.com", "title": "t", "content": "가" * 5000}]}
+        data = json.loads(format_web_results(raw))
+        assert len(data["results"][0]["content"]) == WEB_MAX_CONTENT_CHARS
+
+    def test_URL이_없는_결과는_건너뛴다(self):
+        raw = {"results": [{"title": "URL 없음"}, {"url": "https://a.com", "title": "t"}]}
+        data = json.loads(format_web_results(raw))
+        assert [r["url"] for r in data["results"]] == ["https://a.com"]
+
+    @pytest.mark.parametrize("raw", [{}, {"results": []}, {"results": "x"}, None, "not dict"])
+    def test_쓸_결과가_없으면_None(self, raw):
+        """None이면 도구가 '결과 없음' 문장을 반환한다. 빈 JSON을 LLM에 넘기지 않는다."""
+        assert format_web_results(raw) is None
 
 
 class TestKobisSources:

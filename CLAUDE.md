@@ -44,7 +44,7 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 51개 (pytest만 설치) | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 60개 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
 | `evals.yml` | — | 에이전트 회귀 평가 14개 (`workflow_dispatch` 수동) | 발생 |
@@ -55,7 +55,7 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 
 - `ubuntu-latest` + `.python-version`(3.13) — **nixpacks가 쓰는 것과 같은 조건**
 - `pip install -r requirements.txt` — Railway가 실행하는 것과 같은 명령
-- 서드파티 20개를 실제로 import — 설치 성공과 사용 가능은 다르다.
+- 서드파티 19개를 실제로 import — 설치 성공과 사용 가능은 다르다.
   특히 `AsyncSqliteSaver`는 `langgraph-checkpoint-sqlite`라는 **별도 패키지**라 빠지기 쉽다.
 - `requirements.in`과 락의 드리프트 검사 — `.in`에 추가하고 `gen_lock.py`를 잊는 실수를 막는다
 
@@ -65,7 +65,7 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 
 `python` 잡이 수십 초에 끝나는 건 단위 테스트 대상(`kobis_format.py`, `sources.py`)이
 표준 라이브러리만 쓰도록 분리돼 있어 **pytest만 설치하면 되기 때문**이다.
-반면 `deps` 잡은 락 79개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
+반면 `deps` 잡은 락 78개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
 병렬로 돌아 전체 소요 시간은 크게 늘지 않는다.
 
 `agent.py`/`server.py`는 import만 해도 벡터스토어 빌드와 API 키를 요구해 CI에서 실행할 수
@@ -86,8 +86,8 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 | 파일 | 역할 |
 |---|---|
 | `.python-version` | `3.13`. pyenv(로컬)와 nixpacks(Railway)가 **같은 파일을 읽는다**. nixpacks 지원 상한이 3.13이므로 그 이상으로 올릴 수 없다. |
-| `requirements.in` | 사람이 편집하는 **직접 의존성 14개** (프로덕션). |
-| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 79개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
+| `requirements.in` | 사람이 편집하는 **직접 의존성 13개** (프로덕션). |
+| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 78개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
 | `requirements-dev.txt` | 개발 전용(pytest). **프로덕션 락과 분리**되어 Railway에는 설치되지 않는다. |
 
 ### 패키지를 추가·변경할 때
@@ -192,7 +192,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 | 도구 | 출처를 어디서 얻는가 | 표시 |
 |---|---|---|
 | `imdb_search` | `ToolMessage.artifact`의 `list[Document]` → `metadata["page"]` | PDF 쪽번호 (0-기반이라 +1) |
-| `web_search` | Tavily는 artifact를 안 채운다. **`content`가 JSON 문자열**이라 파싱해서 `results[].url` 추출 | 클릭 가능한 원문 링크 |
+| `web_search` | artifact가 없다. **`content`가 `format_web_results()`가 만든 JSON 문자열**이라 파싱해서 `results[].url` 추출 | 클릭 가능한 원문 링크 |
 | `kobis_search` | 문자열만 반환해 URL이 없다 | 기관 홈페이지 고정 |
 
 - `imdb_tool`은 `response_format="content_and_artifact"`로 생성해야 `artifact`가 채워집니다.
@@ -283,6 +283,23 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 
 **출력 상한** — KOBIS 상세정보는 `actors`를 90건, `staffs`를 625건까지 반환합니다. `staffs`는 전량 제외(VFX 아티스트·투자 등 크루 노이즈), `actors`는 `DETAIL_MAX_ACTORS=8`건까지만 `이름(배역)` 형태로 렌더링하고 나머지는 "외 N명"으로 요약합니다. `companys`는 `companyPartNm`으로 제작사·배급사만 필터합니다.
 
+### 웹 검색 도구 (`web_search`)
+`langchain_tavily.TavilySearch`를 쓰지 않고 `agent.py`의 `_tavily_search()`가 Tavily REST API를
+`requests`로 직접 호출한다. **`TavilySearch`로 되돌리지 말 것.** 바꾼 이유가 전부 실측으로 확인된 문제다.
+
+| 문제 (TavilySearch) | 실측 | 지금 |
+|---|---|---|
+| LLM에 파라미터 9개(`include_domains`, `time_range` 등)를 노출 | 도구 정의 **1,521토큰**. LLM 호출마다 전송되고 질문 하나에 호출이 2번이라 약 3,000토큰이 매번 나감 | `query` 하나, **82토큰** (도구 정의 합계 2,132 → 692) |
+| 결과 dict를 통째로 문자열화 (`score`, `raw_content`, `images`, `request_id` …) | 결과 **1,546토큰** | `format_web_results()`가 title·url·content만, 본문 1,000자 상한 → **1,059토큰** |
+| 생성 시점에 `TAVILY_API_KEY` 필수 | 키가 없으면 **`agent.py` import부터 실패** — 헬스체크의 "선택 키" 설계와 모순 | 키가 없으면 도구만 `MISSING_API_KEY` 반환 |
+| 동기 경로 `requests.post`에 timeout 없음 | 응답이 멈추면 요청 제한(120초)까지 붙잡힘 | `WEB_TIMEOUT=15`, 연결 문제만 2회 재시도 |
+
+- **기존 도구를 새 `@tool` 안에서 `invoke()`로 감싸는 방식도 안 된다.** 중첩 실행이 도구 이벤트로
+  잡혀 `\x1ftool:` 센티넬과 `tool_calls` 집계가 두 번씩 나간다. 그래서 래핑이 아니라 직접 호출이다.
+- 결과 형태는 `sources.py`의 `format_web_results()`(만드는 쪽)와 `_web_sources()`(읽는 쪽)가 공유한다.
+  한쪽만 바꾸면 에러 없이 출처 칩만 사라지므로 두 함수를 같은 모듈에 두고 왕복 테스트로 고정했다.
+- 검색어는 사용자 질문에서 파생되므로 로그에는 `query_len`만 남긴다.
+
 ### 도구 입력 검증 및 에러 포맷
 `kobis_search`는 Pydantic `KobisInput` 스키마(`agent.py`)로 인자를 검증합니다.
 - `search_type`: `Literal["movie", "detail", "daily", "weekly", "weekend", "weekday"]` — 잘못된 값 시 LangChain이 `ValidationError`를 ToolMessage로 변환해 LLM에 반환 → LLM이 자가 정정 후 재호출
@@ -292,14 +309,15 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 > 날짜 검증을 Pydantic `model_validator`로 옮기지 말 것. `search_type` 의존 규칙이라 교차 필드 검증이 필요한데, 옮기면 에러 표면이 `[TOOL_ERROR code=INVALID_DATE]`에서 Pydantic `ValidationError`로 바뀌어 이 문서와 `SYSTEM_PROMPT`의 서술이 전부 어긋납니다.
 
 도구 내부 에러는 표준 포맷으로 LLM에 반환됩니다: **`[TOOL_ERROR code=<CODE>] <message>`**
-- `MISSING_API_KEY` / `INVALID_DATE` / `MOVIE_NOT_FOUND` / `TIMEOUT` / `HTTP_ERROR` / `NETWORK_ERROR` / `PARSE_ERROR`
+- `MISSING_API_KEY` / `INVALID_DATE` / `INVALID_QUERY` / `MOVIE_NOT_FOUND` / `TIMEOUT` / `HTTP_ERROR` / `NETWORK_ERROR` / `PARSE_ERROR`
 - 시스템 프롬프트(`agent.py`의 `SYSTEM_PROMPT`)에 이 코드를 보고 어떻게 행동할지 명시되어 있어, LLM이 도구를 우회(예: kobis 실패 → web_search) 하거나 사용자에게 솔직히 알릴 수 있음
 
 > **헬퍼에서 "못 찾음"을 `raise ValueError`로 신호하지 말 것.** `kobis_search`의 `except (KeyError, ValueError, TypeError)`가 잡아서 `PARSE_ERROR`로 오분류합니다. `None`/빈 dict를 반환하고 호출부에서 `tool_error()`를 반환하세요. 같은 이유로 헬퍼는 `_kobis_get`의 예외를 잡지 않고 그대로 전파시켜 기존 4종 except가 처리하게 합니다.
 
 ### 신뢰성 (Retry / Fallback)
 - `_kobis_get()`은 `tenacity`로 KOBIS API 호출을 최대 3회까지 지수 백오프로 재시도(`RequestException`만 대상)
-- 도구별 타임아웃: `KOBIS_TIMEOUT=10s`. 전체 요청 타임아웃: `REQUEST_TIMEOUT_S=120` (`server.py`)
+- `_tavily_search()`는 **최대 2회, 연결 문제(`Timeout`/`ConnectionError`)만** 재시도. Tavily는 호출마다 크레딧을 쓰고 HTTP 오류는 다시 보내도 같기 때문
+- 도구별 타임아웃: `KOBIS_TIMEOUT=10s`, `WEB_TIMEOUT=15s`. 전체 요청 타임아웃: `REQUEST_TIMEOUT_S=120` (`server.py`)
 - 폴백은 명시적 코드가 아닌 LLM 판단으로 처리됨 — 도구 에러 메시지에 "web_search로 대신 시도해보세요" 같은 힌트를 포함
 
 ### 프론트엔드 레이아웃
@@ -352,7 +370,7 @@ docstring에 적혀 있습니다(대부분 실제 KOBIS 응답에서 발견한 �
   남아 자동 통과되면서 평가가 조용히 무력화되는 fail-open 구조였습니다.
 - `--skip-judge`는 채점 비용만 없앨 뿐 에이전트 본체는 실제로 호출됩니다. **완전 무료가 아닙니다.**
 
-현재 상태: 단위 테스트 51개 전부 통과, 평가 **14/14 전부 통과**.
+현재 상태: 단위 테스트 60개 전부 통과, 평가 **14/14 전부 통과**.
 
 ## 기술 스택
 - **LLM**: OpenAI `gpt-5.4-mini` (temperature=0)
@@ -361,7 +379,7 @@ docstring에 적혀 있습니다(대부분 실제 KOBIS 응답에서 발견한 �
 - **Agent**: `langchain.agents.create_agent` (LangGraph 기반, `MemorySaver` checkpointer)
 - **PDF Loader**: PyMuPDF (`langchain_community.document_loaders.PyMuPDFLoader`)
 - **Korean Movie DB**: KOBIS Open API (`requests`, 영화 목록/영화 상세정보/일별·주간·주말·주중 박스오피스)
-- **Web Search**: Tavily (`langchain_tavily.TavilySearch`, max_results=5)
+- **Web Search**: Tavily REST API 직접 호출 (`requests`, max_results=5). `langchain-tavily`는 쓰지 않는다 — "웹 검색 도구" 참고
 - **Tool Input Validation**: Pydantic `BaseModel` + `field_validator` (`Literal` 타입 강제)
 - **Retry**: `tenacity` (지수 백오프, KOBIS 호출 3회 재시도)
 - **Logging**: `structlog` (JSON 출력, `ContextVar`로 session_id/request_id 자동 첨부)
