@@ -157,6 +157,26 @@ def _kobis_get(url: str, params: dict) -> dict:
     return resp.json()
 
 
+def _search_movie_list(
+    api_key: str, query: str, open_start_dt: str, open_end_dt: str
+) -> list[dict]:
+    """영화명으로 목록을 조회한다. movie/detail 모드가 공유한다.
+
+    결과가 없으면 빈 리스트를 준다(예외로 신호하지 않는다 — PARSE_ERROR로 오분류됨).
+    _kobis_get의 네트워크 예외는 잡지 않고 호출부의 except로 전파시킨다.
+    """
+    params = {"key": api_key, "movieNm": query, "itemPerPage": "10"}
+    if open_start_dt:
+        params["openStartDt"] = open_start_dt
+    if open_end_dt:
+        params["openEndDt"] = open_end_dt
+    return (
+        _kobis_get(f"{KOBIS_BASE}/movie/searchMovieList.json", params)
+        .get("movieListResult", {})
+        .get("movieList", [])
+    )
+
+
 @tool(args_schema=KobisInput)
 def kobis_search(
     query: str,
@@ -234,16 +254,7 @@ def kobis_search(
             others_note = ""
 
             if movie_cd is None:
-                params = {"key": api_key, "movieNm": query, "itemPerPage": "10"}
-                if open_start_dt:
-                    params["openStartDt"] = open_start_dt
-                if open_end_dt:
-                    params["openEndDt"] = open_end_dt
-                movies = (
-                    _kobis_get(f"{KOBIS_BASE}/movie/searchMovieList.json", params)
-                    .get("movieListResult", {})
-                    .get("movieList", [])
-                )
+                movies = _search_movie_list(api_key, query, open_start_dt, open_end_dt)
                 if not movies:
                     log.info(
                         "kobis.movie_not_found",
@@ -305,13 +316,7 @@ def kobis_search(
             return f"KOBIS 영화 상세정보\n\n{format_movie_info(info)}{others_note}"
 
         else:  # movie list
-            params = {"key": api_key, "movieNm": query, "itemPerPage": "10"}
-            if open_start_dt:
-                params["openStartDt"] = open_start_dt
-            if open_end_dt:
-                params["openEndDt"] = open_end_dt
-            data = _kobis_get(f"{KOBIS_BASE}/movie/searchMovieList.json", params)
-            movies = data.get("movieListResult", {}).get("movieList", [])
+            movies = _search_movie_list(api_key, query, open_start_dt, open_end_dt)
             if not movies:
                 log.info("kobis.empty_result", search_type=search_type, query=query)
                 return f"'{query}'에 대한 KOBIS 검색 결과가 없습니다."
@@ -400,8 +405,8 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 
 ## 도구 에러 처리
 - 도구 응답이 `[TOOL_ERROR code=...]`로 시작하면 도구 실패를 의미합니다.
-- `INVALID_DATE`/`VALIDATION_ERROR`: 인자를 고쳐서 같은 도구를 다시 호출하세요.
-- `MISSING_API_KEY`/`TIMEOUT`/`NETWORK_ERROR`/`HTTP_ERROR`: 다른 도구(web_search 등)로 우회하세요.
+- `INVALID_DATE`, 또는 인자 검증 오류(허용되지 않는 search_type, 4자리가 아닌 연도 등): 인자를 고쳐서 같은 도구를 다시 호출하세요.
+- `MISSING_API_KEY`/`TIMEOUT`/`NETWORK_ERROR`/`HTTP_ERROR`/`PARSE_ERROR`: 다른 도구(web_search 등)로 우회하세요.
 - `MOVIE_NOT_FOUND`: 제목 철자를 고쳐 다시 호출하거나 search_type='movie'로 후보를 먼저 확인하세요. 그래도 없으면 web_search로 우회하세요.
 - 모든 도구가 실패하면 사용자에게 솔직하게 알리세요.
 

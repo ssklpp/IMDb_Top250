@@ -165,31 +165,37 @@ export default function Home() {
     }
   };
 
-  const setError = (msgId: string, code: string, message: string) => {
+  // 메시지 하나만 갱신한다. 이전 값이 필요하면(답변 이어붙이기 등) 함수를 넘긴다.
+  const updateMessage = (
+    msgId: string,
+    patch: Partial<Message> | ((m: Message) => Partial<Message>)
+  ) => {
     setMessages((prev) =>
       prev.map((m) =>
-        m.id === msgId
-          ? {
-              ...m,
-              isError: true,
-              answer: errorLabel(code, message),
-              errorCode: code,
-              retryable: RETRYABLE_CODES.has(code),
-              toolStatus: null,
-            }
-          : m
+        m.id === msgId ? { ...m, ...(typeof patch === "function" ? patch(m) : patch) } : m
       )
     );
   };
 
+  const setError = (msgId: string, code: string, message: string) => {
+    updateMessage(msgId, {
+      isError: true,
+      answer: errorLabel(code, message),
+      errorCode: code,
+      retryable: RETRYABLE_CODES.has(code),
+      toolStatus: null,
+    });
+  };
+
   const runRequest = async (msgId: string, q: string) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === msgId
-          ? { ...m, answer: "", isError: false, errorCode: null, retryable: false, toolStatus: null, sources: [] }
-          : m
-      )
-    );
+    updateMessage(msgId, {
+      answer: "",
+      isError: false,
+      errorCode: null,
+      retryable: false,
+      toolStatus: null,
+      sources: [],
+    });
     setIsLoading(true);
 
     try {
@@ -216,28 +222,23 @@ export default function Home() {
 
         const displayText = chunk.replace(/\x1f((?:tool|error|sources):[^\n]*)\n/g, (_, payload) => {
           if (payload === "tool:end") {
-            setMessages((prev) =>
-              prev.map((m) => m.id === msgId ? { ...m, toolStatus: null } : m)
-            );
+            updateMessage(msgId, { toolStatus: null });
           } else if (payload.startsWith("sources:")) {
             try {
               const incoming: Source[] = JSON.parse(payload.slice(8));
-              setMessages((prev) =>
-                prev.map((m) => {
-                  if (m.id !== msgId) return m;
-                  // 도구가 여러 번 호출되면 출처도 여러 번 온다. URL+라벨로 중복 제거.
-                  const seen = new Set((m.sources ?? []).map((s) => `${s.url}|${s.label}`));
-                  const merged = [...(m.sources ?? [])];
-                  for (const s of incoming) {
-                    const key = `${s.url}|${s.label}`;
-                    if (!seen.has(key)) {
-                      seen.add(key);
-                      merged.push(s);
-                    }
+              updateMessage(msgId, (m) => {
+                // 도구가 여러 번 호출되면 출처도 여러 번 온다. URL+라벨로 중복 제거.
+                const seen = new Set((m.sources ?? []).map((s) => `${s.url}|${s.label}`));
+                const merged = [...(m.sources ?? [])];
+                for (const s of incoming) {
+                  const key = `${s.url}|${s.label}`;
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    merged.push(s);
                   }
-                  return { ...m, sources: merged };
-                })
-              );
+                }
+                return { sources: merged };
+              });
             } catch {
               // 출처 파싱 실패는 답변 자체에 영향을 주지 않으므로 무시한다
             }
@@ -248,9 +249,7 @@ export default function Home() {
               toolName === "kobis_search" ? "한국 개봉 영화 검색 중..." :
               toolName === "web_search"   ? "웹 검색 중..." :
               `${toolName} 실행 중...`;
-            setMessages((prev) =>
-              prev.map((m) => m.id === msgId ? { ...m, toolStatus: label } : m)
-            );
+            updateMessage(msgId, { toolStatus: label });
           } else if (payload.startsWith("error:")) {
             const raw = payload.slice(6);
             const sep = raw.indexOf("|");
@@ -262,15 +261,11 @@ export default function Home() {
         });
 
         if (displayText) {
-          setMessages((prev) =>
-            prev.map((m) => m.id === msgId ? { ...m, answer: m.answer + displayText } : m)
-          );
+          updateMessage(msgId, (m) => ({ answer: m.answer + displayText }));
         }
       }
 
-      setMessages((prev) =>
-        prev.map((m) => m.id === msgId ? { ...m, toolStatus: null } : m)
-      );
+      updateMessage(msgId, { toolStatus: null });
     } catch {
       setError(msgId, "NETWORK", "서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요.");
     } finally {
