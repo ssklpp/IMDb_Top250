@@ -63,9 +63,10 @@ url: /.../searchMovieList.json?key=<실제_API_키>&movieNm=...
 - **Framework**: LangChain + LangGraph
 - **PDF Loader**: PyMuPDF
 - **Korean Movie DB**: KOBIS (영화관입장권통합전산망) Open API
-- **Web Search**: Tavily
+- **Web Search**: Tavily REST API 직접 호출 (`langchain-tavily`는 쓰지 않음 — `rules/tools.md` 참고)
 - **API 서버**: FastAPI + uvicorn (스트리밍 응답)
 - **Rate Limiting**: slowapi (IP당 분당 10회)
+- **Cache**: cachetools TTLCache (maxsize=256, TTL 1시간 — 새 세션 질문만)
 - **Tool Validation**: Pydantic 스키마 + Literal 타입 (도구 인자 검증)
 - **Retry**: tenacity (외부 API 호출 지수 백오프 재시도)
 - **Logging**: structlog (JSON 구조화 로그 + session_id/request_id 추적)
@@ -75,6 +76,7 @@ url: /.../searchMovieList.json?key=<실제_API_키>&movieNm=...
 ### 프론트엔드
 - **Framework**: Next.js 16 (App Router, TypeScript)
 - **Styling**: Tailwind CSS v4
+- **Markdown**: react-markdown (에이전트 답변 렌더링)
 - **Dark Mode**: next-themes (시스템 설정 연동, 수동 토글)
 
 ## 에이전트 파이프라인
@@ -135,6 +137,9 @@ KOBIS_API_KEY=your_kobis_api_key
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=your_langsmith_api_key
 LANGCHAIN_PROJECT=imdb-rag-chatbot
+
+# 프로덕션 배포 시: Vercel 도메인으로 변경
+CORS_ORIGINS=http://localhost:3000
 
 # 로깅 (옵션)
 LOG_LEVEL=INFO          # DEBUG/INFO/WARNING/ERROR
