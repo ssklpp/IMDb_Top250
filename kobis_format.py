@@ -6,10 +6,16 @@ API 키를 요구하게 되므로, 외부 의존이 없는 로직을 여기로 �
 이 모듈은 표준 라이브러리만 사용하므로 `pytest tests/unit/`가 1초 안에 끝난다.
 """
 
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 
 # detail 모드 출력 상한. KOBIS는 actors를 90건, staffs를 625건까지 반환하므로
 # 그대로 넣으면 LLM 컨텍스트를 잡아먹는다. staffs는 아예 제외한다.
+# 박스오피스는 한국 기준 날짜로 조회한다. 서버(Railway)는 UTC로 돌기 때문에
+# UTC 자정~오전 9시 사이에는 date.today()가 한국의 어제를 가리킨다.
+KST = timezone(timedelta(hours=9))
+
+_WEEKDAY_KO = ("월", "화", "수", "목", "금", "토", "일")
+
 DETAIL_MAX_ACTORS = 8
 DETAIL_MAX_COMPANIES = 2
 DETAIL_MAX_CANDIDATES = 3
@@ -140,3 +146,54 @@ def format_movie_info(info: dict) -> str:
         lines.append(f"- 상영타입: {', '.join(show_types)}")
 
     return "\n".join(lines)
+
+
+def today_kst() -> date:
+    """한국 기준 오늘 날짜."""
+    return datetime.now(KST).date()
+
+
+def format_date_context(today: date) -> str:
+    """LLM에 넘길 현재 날짜 문장.
+
+    코드 어디에서도 현재 날짜를 알려주지 않으면 LLM은 자기 학습 시점을 기준으로
+    "지난 주"를 계산한다. 실제로 박스오피스 질문에서 1년 전 데이터를 가져온 적이 있다.
+    요청마다 새로 만들어야 한다 — 에이전트 생성 시점에 넣으면 서버가 며칠 떠 있는
+    동안 날짜가 굳는다.
+    """
+    return (
+        f"오늘은 {today.isoformat()} {_WEEKDAY_KO[today.weekday()]}요일입니다(한국 시간 기준). "
+        "'어제', '지난 주'처럼 상대적인 기간은 이 날짜를 기준으로 계산하세요."
+    )
+
+
+def latest_boxoffice_date(search_type: str, today: date) -> date:
+    """해당 모드에서 조회 가능한 가장 최근 날짜.
+
+    KOBIS는 진행 중인 기간을 주지 않는다(실호출로 확인).
+    - 일별: 어제까지
+    - 주간·주말·주중: 이번 주는 아직 없고, 지난 주(= 지난 일요일이 속한 주)까지
+    """
+    if search_type == "daily":
+        return today - timedelta(days=1)
+    return today - timedelta(days=today.weekday() + 1)  # 직전 일요일
+
+
+def boxoffice_too_recent(search_type: str, query: str, today: date) -> str | None:
+    """아직 집계 전인 날짜면 안내 문구를, 조회 가능하면 None을 반환한다.
+
+    호출 자체를 막아 왕복을 줄인다. 이 검사가 없으면 LLM이 오늘 날짜로 한 번
+    호출해 빈 결과를 받고 나서야 이전 날짜로 재시도한다.
+    `is_valid_date()`를 통과한 query만 넘어온다고 전제한다.
+    """
+    asked = datetime.strptime(query, "%Y%m%d").date()
+    latest = latest_boxoffice_date(search_type, today)
+    if asked <= latest:
+        return None
+    unit = "하루" if search_type == "daily" else "일주일"
+    return (
+        f"{fmt_date(query)}은(는) 아직 집계 전이라 조회할 수 없습니다. "
+        f"KOBIS는 일별은 다음 날, 주간·주말·주중은 해당 주가 끝난 뒤에 제공합니다. "
+        f"조회 가능한 가장 최근 날짜는 {latest.strftime('%Y%m%d')}입니다. "
+        f"연도는 그대로 두고 {unit} 이전 날짜로 다시 호출하세요."
+    )

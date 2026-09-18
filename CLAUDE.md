@@ -132,7 +132,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 ## 도구 에러 계약
 
 도구 내부 에러는 표준 포맷으로 LLM에 반환됩니다: **`[TOOL_ERROR code=<CODE>] <message>`**
-- `MISSING_API_KEY` / `INVALID_DATE` / `INVALID_QUERY` / `MOVIE_NOT_FOUND` / `TIMEOUT` / `HTTP_ERROR` / `NETWORK_ERROR` / `PARSE_ERROR`
+- `MISSING_API_KEY` / `INVALID_DATE` / `INVALID_QUERY` / `NO_DATA` / `MOVIE_NOT_FOUND` / `TIMEOUT` / `HTTP_ERROR` / `NETWORK_ERROR` / `PARSE_ERROR`
 - 시스템 프롬프트(`agent.py`의 `SYSTEM_PROMPT`)에 이 코드를 보고 어떻게 행동할지 명시되어 있어, LLM이 도구를 우회(예: kobis 실패 → web_search) 하거나 사용자에게 솔직히 알릴 수 있음
 
 ## 프롬프트 규칙
@@ -156,10 +156,10 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 60개 (pytest만 설치) | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 66개 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
-| `evals.yml` | — | 에이전트 회귀 평가 14개 (`workflow_dispatch` 수동) | 발생 |
+| `evals.yml` | — | 에이전트 회귀 평가 15개 (`workflow_dispatch` 수동) | 발생 |
 
 의존성은 **로컬과 Railway가 같은 것을 설치하도록** 네 파일로 고정돼 있다. 이 구조를 깨뜨리지 말 것.
 
@@ -214,9 +214,9 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 3. `web/`를 고쳤으면 `npm run lint` + `npm run build`.
 4. 패키지를 건드렸으면 `scripts/gen_lock.py`로 락 재생성 (상세: `rules/ci-deps.md`).
 5. 도구·프롬프트·모델을 고쳤으면 에이전트 평가. **과금된다** — 관련 항목(`--ids`)부터 돌리고
-   프롬프트·모델 변경은 전체 14개를 돌린다.
+   프롬프트·모델 변경은 전체 15개를 돌린다.
 
-현재 상태: 단위 테스트 60개 전부 통과, 평가 **14/14 전부 통과**.
+현재 상태: 단위 테스트 66개 전부 통과, 평가 **15/15 전부 통과**.
 
 문서를 고칠 때는 **숫자(테스트 개수·의존성 개수)가 여러 파일에 흩어져 있으니** 바뀌기 전 숫자로
 `git grep`해서 전부 맞출 것.

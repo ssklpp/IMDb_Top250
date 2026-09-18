@@ -35,10 +35,11 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from langchain_core.messages import HumanMessage  # noqa: E402
+from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 from langchain_openai import ChatOpenAI  # noqa: E402
 
 from agent import build_agent  # noqa: E402
+from kobis_format import format_date_context, today_kst  # noqa: E402
 
 # 평가는 항목마다 새 thread_id를 쓰므로 영속화가 불필요하고,
 # 기본 MemorySaver를 써서 실제 사용자 대화 DB를 건드리지 않게 격리한다.
@@ -93,6 +94,9 @@ def _strip_code_fence(text: str) -> str:
 
 JUDGE_PROMPT = """당신은 AI 챗봇 응답을 평가하는 엄격한 채점관입니다.
 
+[오늘 날짜]
+{date_context}
+
 [질문]
 {question}
 
@@ -127,7 +131,13 @@ async def run_one(item: dict, judge_llm: ChatOpenAI | None) -> EvalResult:
 
     try:
         async for event in agent.astream_events(
-            {"messages": [HumanMessage(content=question)]},
+            # server.py와 같은 입력이어야 평가가 프로덕션 동작을 검증한다.
+            {
+                "messages": [
+                    SystemMessage(content=format_date_context(today_kst())),
+                    HumanMessage(content=question),
+                ]
+            },
             config=config,
             version="v2",
         ):
@@ -174,7 +184,12 @@ async def run_one(item: dict, judge_llm: ChatOpenAI | None) -> EvalResult:
     if judge_llm is not None and rubric and answer:
         try:
             judge_resp = await judge_llm.ainvoke(
-                JUDGE_PROMPT.format(question=question, rubric=rubric, answer=answer)
+                JUDGE_PROMPT.format(
+                    date_context=format_date_context(today_kst()),
+                    question=question,
+                    rubric=rubric,
+                    answer=answer,
+                )
             )
             judge_text = (
                 judge_resp.content if hasattr(judge_resp, "content") else str(judge_resp)

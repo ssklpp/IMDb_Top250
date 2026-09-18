@@ -25,11 +25,13 @@ from tenacity import (
 
 from kobis_format import (
     DETAIL_MAX_CANDIDATES,
+    boxoffice_too_recent,
     fmt_date,
     format_movie_info,
     format_show_range,
     is_valid_date,
     pick_movie,
+    today_kst,
     tool_error,
 )
 from logging_config import get_logger
@@ -269,12 +271,19 @@ def kobis_search(
             "KOBIS_API_KEY 환경변수가 설정되지 않아 한국 영화 데이터에 접근할 수 없습니다. 대신 web_search를 시도해보세요.",
         )
 
-    if search_type in BOXOFFICE_TYPES and not is_valid_date(query):
-        return tool_error(
-            "INVALID_DATE",
-            f"박스오피스 조회 시 query는 실제 존재하는 YYYYMMDD 8자리 날짜여야 합니다. "
-            f"받은 값 '{query}'은(는) 유효한 날짜가 아닙니다.",
-        )
+    if search_type in BOXOFFICE_TYPES:
+        if not is_valid_date(query):
+            return tool_error(
+                "INVALID_DATE",
+                f"박스오피스 조회 시 query는 실제 존재하는 YYYYMMDD 8자리 날짜여야 합니다. "
+                f"받은 값 '{query}'은(는) 유효한 날짜가 아닙니다.",
+            )
+        # 아직 집계 전인 날짜는 호출하지 않고 바로 막는다. KOBIS를 한 번 다녀와야
+        # 알 수 있던 것을 왕복 없이 알려준다.
+        too_recent = boxoffice_too_recent(search_type, query, today_kst())
+        if too_recent:
+            log.info("kobis.too_recent", search_type=search_type, query=query)
+            return tool_error("NO_DATA", too_recent)
 
     log.info(
         "kobis.request",
@@ -304,8 +313,16 @@ def kobis_search(
             # KOBIS가 '주말 박스오피스' 같은 한글 라벨을 직접 주므로 그대로 쓴다.
             label = result.get("boxofficeType") or BOXOFFICE_FALLBACK_LABEL[search_type]
             if not items:
+                # 진행 중인 기간을 물으면 KOBIS는 빈 목록을 준다. 그냥 문장으로 돌려주면
+                # 에러 계약 밖이라 LLM이 임의로 복구한다 — 실제로 연도를 1년 낮춰
+                # 재호출해서 작년 데이터를 "지난 주"라고 답한 적이 있다.
                 log.info("kobis.empty_result", search_type=search_type, query=query)
-                return f"{query} {label} 데이터가 없습니다."
+                return tool_error(
+                    "NO_DATA",
+                    f"{fmt_date(query)} {label} 데이터가 아직 없습니다. "
+                    "KOBIS는 일별은 다음 날, 주간·주말·주중은 해당 주가 끝난 뒤에 제공합니다. "
+                    "연도는 그대로 두고 하루(일별) 또는 일주일(주간·주말·주중) 이전 날짜로 다시 호출하세요.",
+                )
 
             period = format_show_range(result.get("showRange", "")) or query
             lines = [f"{label} ({period})\n"]
@@ -472,6 +489,8 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
   - `detail`: 특정 영화 한 편의 상세정보 — 출연진과 배역, 관람등급, 상영시간, 장르, 제작/배급사. query에 **영화 제목**을 그대로 넣으면 됩니다(영화코드를 따로 찾을 필요 없음).
   - `daily`: 일별 박스오피스. query에 YYYYMMDD 8자리 날짜.
   - `weekly` / `weekend` / `weekday`: 각각 주간(월~일) / 주말(금~일) / 주중(월~목) 박스오피스. query에는 조회할 주에 속한 YYYYMMDD 날짜를 넣습니다. 사용자가 "주말 순위"를 물으면 `weekly`가 아니라 `weekend`를 쓰세요.
+  - **상대적인 기간은 대화 첫머리에 주어진 오늘 날짜를 기준으로 계산하세요.** "어제"=오늘-1일, "지난 주"/"지난 주말"=오늘-7일이 속한 주입니다.
+  - **KOBIS는 진행 중인 기간을 제공하지 않습니다.** 일별은 어제까지, 주간·주말·주중은 지난 주까지만 조회됩니다. 오늘 날짜로 박스오피스를 조회하지 마세요.
   - 출연진·배역·관람등급·러닝타임 질문에는 `movie`가 아니라 `detail`을 사용하세요.
 - **web_search**: 위 두 도구로 부족할 때 — 최신 수상 내역, 해외 신작, 최신 뉴스 등.
 
@@ -479,6 +498,7 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 - 도구 응답이 `[TOOL_ERROR code=...]`로 시작하면 도구 실패를 의미합니다.
 - `INVALID_DATE`/`INVALID_QUERY`, 또는 인자 검증 오류(허용되지 않는 search_type, 4자리가 아닌 연도 등): 인자를 고쳐서 같은 도구를 다시 호출하세요.
 - `MISSING_API_KEY`/`TIMEOUT`/`NETWORK_ERROR`/`HTTP_ERROR`/`PARSE_ERROR`: 다른 도구(web_search 등)로 우회하세요.
+- `NO_DATA`: 아직 집계되지 않은 기간입니다. **연도를 바꾸지 말고** 하루(일별) 또는 일주일(주간·주말·주중) 이전 날짜로 다시 호출하세요. 그래도 없으면 사용자에게 알리세요.
 - `MOVIE_NOT_FOUND`: 제목 철자를 고쳐 다시 호출하거나 search_type='movie'로 후보를 먼저 확인하세요. 그래도 없으면 web_search로 우회하세요.
 - 모든 도구가 실패하면 사용자에게 솔직하게 알리세요.
 

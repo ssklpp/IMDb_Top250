@@ -12,7 +12,7 @@ from cachetools import TTLCache
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -20,6 +20,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from agent import CHECKPOINT_DB_PATH, build_agent, vectorstore
+from kobis_format import format_date_context, today_kst
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
 from sources import extract_sources
 
@@ -202,7 +203,14 @@ async def chat(request: Request, req: QuestionRequest):
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_S):
                 async for event in request.app.state.agent.astream_events(
-                    {"messages": [HumanMessage(content=req.question)]},
+                    # 날짜는 요청마다 새로 넣는다. 에이전트 생성 시점에 넣으면
+                    # 서버가 며칠 연속 실행되는 동안 날짜가 굳는다.
+                    {
+                        "messages": [
+                            SystemMessage(content=format_date_context(today_kst())),
+                            HumanMessage(content=req.question),
+                        ]
+                    },
                     config=config,
                     version="v2",
                 ):

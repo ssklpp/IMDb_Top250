@@ -1,10 +1,11 @@
 import uuid
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from agent import CHECKPOINT_DB_PATH, build_agent
+from kobis_format import format_date_context, today_kst
 from logging_config import configure_logging, get_logger, session_id_var
 
 configure_logging()
@@ -41,7 +42,12 @@ def main() -> None:
 
             try:
                 result = agent.invoke(
-                    {"messages": [HumanMessage(content=question)]},
+                    {
+                        "messages": [
+                            SystemMessage(content=format_date_context(today_kst())),
+                            HumanMessage(content=question),
+                        ]
+                    },
                     config=config,
                 )
                 print(f"\n답변: {result['messages'][-1].content}")

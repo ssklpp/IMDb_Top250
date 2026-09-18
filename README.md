@@ -7,7 +7,7 @@ https://im-db-top250.vercel.app/
 IMDB Top 250 영화 PDF 검색(RAG), KOBIS 한국 영화 데이터베이스, Tavily 웹 검색을 결합한 LangGraph 에이전트 기반 영화 전문가 챗봇입니다.  
 FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니다.
 
-**품질 지표** — 단위 테스트 60개 통과 (0.1초) · 에이전트 회귀 평가 14/14 통과 · 의존성 78개 전체 고정
+**품질 지표** — 단위 테스트 66개 통과 (0.1초) · 에이전트 회귀 평가 15/15 통과 · 의존성 78개 전체 고정
 
 ---
 
@@ -71,7 +71,7 @@ url: /.../searchMovieList.json?key=<실제_API_키>&movieNm=...
 - **Retry**: tenacity (외부 API 호출 지수 백오프 재시도)
 - **Logging**: structlog (JSON 구조화 로그 + session_id/request_id 추적)
 - **대화 영속화**: LangGraph `AsyncSqliteSaver` (서버 재시작 후에도 대화 유지)
-- **테스트**: pytest 단위 테스트 60개 + 골든 데이터셋 회귀 평가 14개 (LLM-as-judge)
+- **테스트**: pytest 단위 테스트 66개 + 골든 데이터셋 회귀 평가 15개 (LLM-as-judge)
 
 ### 프론트엔드
 - **Framework**: Next.js 16 (App Router, TypeScript)
@@ -208,7 +208,7 @@ pytest tests/unit/ -q
 python -m tests.evals.run_evals --skip-judge   # judge 채점만 생략
 python -m tests.evals.run_evals                # LLM-as-judge 포함
 ```
-골든 데이터셋 14개에 대해 **도구 호출이 기대대로인지 + 키워드가 답변에 있는지**를 확인하고,
+골든 데이터셋 15개에 대해 **도구 호출이 기대대로인지 + 키워드가 답변에 있는지**를 확인하고,
 judge 모드에서는 rubric 기준 1~5점 채점까지 합니다. 종료 코드 0이면 전체 통과라 CI에 바로 쓸 수 있습니다.
 
 > judge 호출이 실패하면 해당 항목을 **통과가 아니라 실패로** 처리합니다. 예전에는 점수가 비면
@@ -220,8 +220,8 @@ judge 모드에서는 rubric 기준 1~5점 채점까지 합니다. 종료 코드
 
 | 워크플로 | 트리거 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | 모든 push·PR | 구문 검사 + 단위 테스트 60개 + **프로덕션 의존성 설치 검증** + 프론트 lint·build | **0** |
-| `evals.yml` | 수동 실행 | 에이전트 회귀 평가 14개 | 발생 |
+| `ci.yml` | 모든 push·PR | 구문 검사 + 단위 테스트 66개 + **프로덕션 의존성 설치 검증** + 프론트 lint·build | **0** |
+| `evals.yml` | 수동 실행 | 에이전트 회귀 평가 15개 | 발생 |
 
 의존성 검증 잡은 Railway와 같은 조건(linux + Python 3.13)에서 `requirements.txt`를 실제로
 설치하고, 앱이 기동 시 쓰는 서드파티 19개를 직접 import해봅니다. **배포 실패를 푸시 시점에
@@ -253,7 +253,7 @@ PDF 해시로 캐시해 임베딩 재생성 비용이 반복되지 않게 했습
 - **사용자 입력 검증** — 질문 길이(2000자)와 공백-only 입력, `session_id` 형식을 서버에서 제한. 검증 실패는 422 → `INVALID_INPUT`으로 변환해 원인을 사용자에게 알립니다
 - **의미 있는 헬스체크** — `/health`가 에이전트·벡터스토어·API 키를 실제로 확인하고, 서비스 불가(503)와 부분 장애(200 degraded)를 구분합니다
 - **응답 헤더 추적** — `X-Request-Id`, `X-Session-Id`, `X-Cache`(HIT/MISS) 헤더로 요청 추적 가능
-- **테스트 두 층** — 순수 함수 단위 테스트 60개(0.1초, 비용 0)와 에이전트 회귀 평가 14개(LLM-as-judge)를 분리 운영. 테스트를 붙이기 위해 순수 로직을 `kobis_format.py`/`sources.py`로 분리해 `agent.py`의 무거운 초기화 없이 검증합니다
+- **테스트 두 층** — 순수 함수 단위 테스트 66개(0.1초, 비용 0)와 에이전트 회귀 평가 15개(LLM-as-judge)를 분리 운영. 테스트를 붙이기 위해 순수 로직을 `kobis_format.py`/`sources.py`로 분리해 `agent.py`의 무거운 초기화 없이 검증합니다
 - **응답 캐싱** — 동일 질문 반복 시 TTLCache(1시간)로 API 비용 절감
 - **레이트 리미팅** — IP당 분당 10회 제한, 초과 시 429 응답
 - **예시 질문** — 빈 화면에 클릭 가능한 예시 질문 4개 표시

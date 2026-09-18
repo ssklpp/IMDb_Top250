@@ -7,9 +7,16 @@
 각 테스트가 어떤 실패를 막는지 docstring에 적어두었다.
 """
 
+from datetime import date, datetime, timezone
+
 import pytest
 
 from kobis_format import (
+    boxoffice_too_recent,
+    latest_boxoffice_date,
+    KST,
+    format_date_context,
+    today_kst,
     DETAIL_MAX_ACTORS,
     fmt_date,
     format_movie_info,
@@ -249,3 +256,87 @@ class TestFormatMovieInfo:
         ]
         out = format_movie_info(self._info(showTypes=show_types))
         assert "2D, IMAX" in out
+
+
+class TestDateContext:
+    """LLM에 현재 날짜를 주입하는 문장.
+
+    이게 없으면 LLM이 자기 학습 시점을 기준으로 "지난 주"를 계산해서
+    1년 전 박스오피스를 가져온 적이 있다.
+    """
+
+    def test_날짜와_요일을_한국어로_표기한다(self):
+        out = format_date_context(date(2026, 9, 18))
+        assert "2026-09-18" in out
+        assert "금요일" in out
+
+    @pytest.mark.parametrize(
+        "d,expected",
+        [
+            (date(2026, 9, 14), "월요일"),
+            (date(2026, 9, 18), "금요일"),
+            (date(2026, 9, 20), "일요일"),
+        ],
+    )
+    def test_요일_계산(self, d, expected):
+        assert expected in format_date_context(d)
+
+    def test_상대_기간의_기준임을_알린다(self):
+        """날짜만 주면 모델이 '지난 주'를 자기 방식대로 해석할 수 있다."""
+        out = format_date_context(date(2026, 9, 18))
+        assert "지난 주" in out
+
+    def test_한국_기준_날짜를_쓴다(self):
+        """Railway는 UTC로 돌아서 UTC 자정~오전 9시에는 한국의 어제를 가리킨다."""
+        assert KST.utcoffset(None).total_seconds() == 9 * 3600
+        assert today_kst() == datetime.now(timezone.utc).astimezone(KST).date()
+
+
+class TestBoxofficeAvailability:
+    """KOBIS는 진행 중인 기간을 주지 않는다(실호출로 확인).
+
+    이 검사가 없으면 LLM이 오늘 날짜로 한 번 호출해 빈 결과를 받고 나서야
+    이전 날짜로 재시도한다. 호출 전에 걸러 왕복을 없앤다.
+    """
+
+    FRI = date(2026, 9, 18)  # 금요일
+
+    def test_일별은_어제까지(self):
+        assert latest_boxoffice_date("daily", self.FRI) == date(2026, 9, 17)
+
+    def test_주간계열은_지난_일요일까지(self):
+        """이번 주(9/14~9/20)는 아직 집계 전이고, 지난 주는 9/7~9/13이다."""
+        for st in ("weekly", "weekend", "weekday"):
+            assert latest_boxoffice_date(st, self.FRI) == date(2026, 9, 13)
+
+    def test_월요일에는_바로_전날이_지난_주다(self):
+        mon = date(2026, 9, 14)
+        assert latest_boxoffice_date("weekly", mon) == date(2026, 9, 13)
+
+    @pytest.mark.parametrize(
+        "st,query",
+        [
+            ("daily", "20260918"),   # 오늘
+            ("daily", "20260919"),   # 미래
+            ("weekly", "20260914"),  # 이번 주 월요일
+            ("weekend", "20260918"), # 이번 주
+        ],
+    )
+    def test_집계_전이면_안내_문구(self, st, query):
+        msg = boxoffice_too_recent(st, query, self.FRI)
+        assert msg is not None
+        assert "연도는 그대로" in msg          # 연도를 낮추는 오복구를 막는다
+        assert "2026" in msg                    # 대안 날짜를 제시한다
+
+    @pytest.mark.parametrize(
+        "st,query",
+        [
+            ("daily", "20260917"),   # 어제
+            ("daily", "20250101"),   # 과거
+            ("weekly", "20260913"),  # 지난 주 일요일
+            ("weekly", "20260907"),  # 지난 주 월요일
+            ("weekend", "20260911"),
+        ],
+    )
+    def test_조회_가능하면_None(self, st, query):
+        assert boxoffice_too_recent(st, query, self.FRI) is None
