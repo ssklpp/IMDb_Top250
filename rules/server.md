@@ -61,7 +61,12 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 - **환경변수**:
   - `LOG_LEVEL` (기본 `INFO`)
   - `LOG_FORMAT=json` (기본, 프로덕션용) / `LOG_FORMAT=console` (개발 시 컬러 출력)
-- **로그 이벤트 예시**: `vectorstore.cache_hit`, `chat.request`, `chat.tool_start`, `chat.tool_end`, `chat.done`(elapsed_s, tool_calls), `chat.cache_hit`, `chat.timeout`, `kobis.request`, `kobis.success`, `kobis.timeout`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info)
+- **로그 이벤트** (코드에 있는 전체 목록 — 새 이벤트를 추가하면 여기도 갱신):
+  - 요청: `chat.request`, `chat.cache_hit`, `chat.tool_start`, `chat.tool_end`, `chat.sources`, `chat.done`(elapsed_s, tool_calls), `chat.timeout`, `chat.unhandled_error`
+  - 서버: `startup.checkpointer_ready`, `shutdown.checkpointer_closed`, `health.not_ok`, `vectorstore.cache_hit`, `vectorstore.build_start`, `vectorstore.build_done`
+  - KOBIS: `kobis.request`, `kobis.success`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info), `kobis.too_recent`(호출 전 차단), `kobis.empty_result`, `kobis.no_api_key`, `kobis.timeout`, `kobis.http_error`, `kobis.network_error`, `kobis.parse_error`
+  - 웹 검색: `web.request`(query_len), `web.success`, `web.empty_result`, `web.no_api_key`, `web.timeout`, `web.http_error`, `web.network_error`, `web.parse_error`
+  - CLI: `cli.start`, `cli.exit`, `cli.invoke_error`
 - 모든 로그는 `stderr`로 출력되어 uvicorn 표준 로그와 섞이지 않음
 
 `print()` 사용은 금지. 새 코드는 `from logging_config import get_logger; log = get_logger("module_name")`을 사용해야 합니다.

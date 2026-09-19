@@ -75,7 +75,7 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 
 ```
 logging_config.py ← 공통: structlog JSON 로거 + ContextVar(session_id/request_id)
-kobis_format.py   ← 순수 함수: 영화 판별(pick_movie), 날짜/응답 가공. 외부 의존 없음
+kobis_format.py   ← 순수 함수: 영화 판별(pick_movie), 날짜/응답 가공, 현재 날짜 문장·집계 가능일 판정. 외부 의존 없음
 sources.py        ← 순수 함수: 도구 출력에서 답변 출처 추출. 외부 의존 없음
 agent.py          ← vectorstore 캐시, LLM, tools, build_agent() 팩토리
 imdb_rag.py       ← CLI 루프 (sync SqliteSaver)
@@ -129,6 +129,16 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 > **센티넬을 추가할 때는 프론트 정규식의 alternation도 함께 고쳐야 합니다.** 안 고치면 새 센티넬이
 > 본문 텍스트로 그대로 화면에 출력됩니다.
 
+### 현재 날짜 주입
+LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기 방식대로 계산하고, 데이터가 없을 때
+연도를 낮춰 재시도한다 — 실제로 1년 전 박스오피스를 "지난 주"라고 답한 적이 있다.
+
+- `format_date_context(today_kst())`(`kobis_format.py`)가 만든 문장을 **질문 앞에 `SystemMessage`로** 넣는다.
+- **요청마다** 만든다. `build_agent()`의 시스템 프롬프트에 넣으면 서버가 며칠 떠 있는 동안 날짜가 굳는다.
+- `date.today()`가 아니라 `today_kst()`를 쓴다. Railway는 UTC로 돌아서 한국 오전 9시 전에는 하루 밀린다.
+- 넣는 곳은 세 군데다: `server.py`, `imdb_rag.py`, `tests/evals/run_evals.py`. 평가도 같은 입력이어야
+  프로덕션 동작을 검증한다. 채점관(judge) 프롬프트에도 같은 날짜가 들어간다.
+
 ## 도구 에러 계약
 
 도구 내부 에러는 표준 포맷으로 LLM에 반환됩니다: **`[TOOL_ERROR code=<CODE>] <message>`**
@@ -139,6 +149,10 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 - 에이전트 답변은 **한국어**로 출력
 - 모르는 내용은 모른다고 답변
 - **답변 범위 제한** — 영화·영상 콘텐츠와 무관한 질문(음식, 날씨, 코딩 등)은 도구를 호출하지 않고 거절한 뒤 영화 질문을 유도
+- **날짜 규칙** — 상대 기간은 주입된 오늘 날짜 기준("어제"=오늘-1일, "지난 주"=오늘-7일이 속한 주).
+  KOBIS는 진행 중인 기간을 주지 않으므로 오늘 날짜로 박스오피스를 조회하지 말 것. `NO_DATA`를 받으면
+  **연도를 바꾸지 말고** 하루·일주일 이전으로 재호출. 이 규칙을 지우면 1년 전 데이터 버그가 재발한다 —
+  고칠 때는 평가 `kobis-006`을 돌릴 것.
 
 ### 답변 범위 규칙을 수정할 때 주의할 것
 `SYSTEM_PROMPT`의 `## 답변 범위` 섹션은 **세 부분이 한 세트**다. 하나만 고치면 경계가 무너진다.
@@ -156,7 +170,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 66개 (pytest만 설치) | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 78개 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
 | `evals.yml` | — | 에이전트 회귀 평가 15개 (`workflow_dispatch` 수동) | 발생 |
@@ -196,7 +210,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 
 | 이걸 바꾸면 | 이것도 함께 | 안 고치면 | 상세 |
 |---|---|---|---|
-| `server.py`의 센티넬(`…`) 추가 | `page.tsx`의 정규식 alternation | 신호 문자가 답변에 그대로 출력 | `rules/server.md` |
+| `server.py`의 센티넬(`\x1f…`) 추가 | `page.tsx`의 정규식 alternation | 신호 문자가 답변에 그대로 출력 | `rules/server.md` |
 | `MAX_QUESTION_CHARS`(2000) | `server.py`와 `page.tsx` 양쪽 | 입력창과 서버 제한이 어긋남 | `rules/server.md` |
 | `sources.format_web_results()` | `sources._web_sources()` | 출처 칩만 사라짐 | `rules/server.md` |
 | 새 `tool_error` 코드 | `SYSTEM_PROMPT`의 `## 도구 에러 처리` | LLM이 대처 방법을 모름 | `rules/tools.md` |
@@ -204,6 +218,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 | `requirements.in` | `scripts/gen_lock.py` 재생성 + `ci.yml`의 import 목록 | CI 실패 또는 배포 불일치 | `rules/ci-deps.md` |
 | 청크 파라미터(`chunk_size` 등) | `vectorstore/` 인덱스 삭제 + `evals.yml` 캐시 키 `v1`→`v2` | 예전 인덱스를 계속 사용 | 이 문서 |
 | `SYSTEM_PROMPT`의 답변 범위 | 평가 `refusal-001`과 `refusal-002`를 **둘 다** 실행 | 과잉 거절을 놓침 | 이 문서 |
+| 에이전트에 넘기는 메시지 구성 (새 진입점 포함) | 질문 앞에 `SystemMessage(format_date_context(today_kst()))` | 상대 기간 질문이 엉뚱한 연도로 답함 | 이 문서 |
 
 ## 작업 순서
 
@@ -216,7 +231,7 @@ Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합�
 5. 도구·프롬프트·모델을 고쳤으면 에이전트 평가. **과금된다** — 관련 항목(`--ids`)부터 돌리고
    프롬프트·모델 변경은 전체 15개를 돌린다.
 
-현재 상태: 단위 테스트 66개 전부 통과, 평가 **15/15 전부 통과**.
+현재 상태: 단위 테스트 78개 전부 통과, 평가 **15/15 전부 통과**.
 
 문서를 고칠 때는 **숫자(테스트 개수·의존성 개수)가 여러 파일에 흩어져 있으니** 바뀌기 전 숫자로
 `git grep`해서 전부 맞출 것.
