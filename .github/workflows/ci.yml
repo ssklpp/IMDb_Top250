@@ -44,6 +44,12 @@ jobs:
       - name: 단위 테스트
         run: pytest tests/unit/ -q
 
+      # 문서의 숫자(테스트·평가·의존성 개수), 로그 이벤트 목록, 제어 문자, 참조 경로가
+      # 코드와 맞는지. 문서가 코드보다 뒤처지는 일이 실제로 반복돼서 푸시 시점에 잡는다.
+      # 표준 라이브러리 + pytest만 쓰므로 이 잡의 설치 구성 그대로 돈다.
+      - name: 문서-코드 대조
+        run: python scripts/check_docs.py
+
   deps:
     name: 프로덕션 의존성 — 배포 환경에서 설치되는지
     runs-on: ubuntu-latest

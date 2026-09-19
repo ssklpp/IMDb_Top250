@@ -13,4 +13,7 @@ __pycache__/
 .faiss
 vectorstore/
 
-.claude/
+# Claude Code: 개인 설정(settings.local.json)은 제외하고 프로젝트 스킬만 추적한다.
+# 스킬이 git에 있어야 다른 PC·다른 사람도 같은 절차를 쓴다.
+.claude/*
+!.claude/skills/

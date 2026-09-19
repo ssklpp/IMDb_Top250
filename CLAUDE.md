@@ -23,6 +23,16 @@ IMDB Top 250 영화 PDF를 기반으로 한 AI 영화 전문가 챗봇. RAG(PDF 
 기술 스택과 `.env` 항목은 **README.md가 단일 출처**다. 여기에 복사해 두지 말 것 — 두 곳이
 어긋나면 어느 쪽이 맞는지 알 수 없다.
 
+## 프로젝트 스킬 (`.claude/skills/`)
+
+| 스킬 | 언제 | 도구 |
+|---|---|---|
+| `release` | 커밋·푸시하고 CI·배포·`/health`까지 확인할 때 | `.claude/skills/release/check_deploy.py` |
+| `trace` | 챗봇이 틀리거나 이상한 답을 했을 때 원인을 찾을 때 | `scripts/trace.py` |
+
+`.claude/`는 gitignore지만 `skills/`만 예외로 추적한다. `settings.local.json`은 개인 권한 설정이라
+계속 제외된다. 스킬이 git에 있어야 다른 PC에서도 같은 절차를 쓴다.
+
 ## 실행 명령어
 
 ### 백엔드 (FastAPI)
@@ -81,6 +91,8 @@ agent.py          ← vectorstore 캐시, LLM, tools, build_agent() 팩토리
 imdb_rag.py       ← CLI 루프 (sync SqliteSaver)
 server.py         ← FastAPI 앱 (lifespan에서 AsyncSqliteSaver 준비, 스트리밍/에러 분류)
 scripts/gen_lock.py ← requirements.in → requirements.txt 락 생성
+scripts/check_docs.py ← 문서의 숫자·로그 이벤트·제어 문자·참조 경로를 코드와 대조 (CI에서 실행)
+scripts/trace.py    ← 질문 하나를 실행하며 도구 호출 인자·결과·토큰을 추적 (진단용, 과금)
 tests/unit/       ← pytest 단위 테스트 (kobis_format, sources)
 tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 ```
@@ -170,7 +182,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 78개 (pytest만 설치) | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 78개 + 문서-코드 대조 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
 | `evals.yml` | — | 에이전트 회귀 평가 15개 (`workflow_dispatch` 수동) | 발생 |
@@ -226,6 +238,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 
 1. `pytest tests/unit/ -q` — 0.1초, 비용 0. **코드를 고쳤으면 항상 먼저.**
 2. `compileall` — `agent.py`/`server.py`는 import에 API 키가 필요해 CI도 구문만 검사한다.
+   그리고 `scripts/check_docs.py` — 문서의 숫자·로그 이벤트가 코드와 맞는지. CI에서도 돈다.
 3. `web/`를 고쳤으면 `npm run lint` + `npm run build`.
 4. 패키지를 건드렸으면 `scripts/gen_lock.py`로 락 재생성 (상세: `rules/ci-deps.md`).
 5. 도구·프롬프트·모델을 고쳤으면 에이전트 평가. **과금된다** — 관련 항목(`--ids`)부터 돌리고
@@ -233,8 +246,8 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 
 현재 상태: 단위 테스트 78개 전부 통과, 평가 **15/15 전부 통과**.
 
-문서를 고칠 때는 **숫자(테스트 개수·의존성 개수)가 여러 파일에 흩어져 있으니** 바뀌기 전 숫자로
-`git grep`해서 전부 맞출 것.
+숫자(테스트·평가·의존성 개수)는 여러 문서에 흩어져 있다. 어긋나면 `scripts/check_docs.py`가
+어느 파일 몇 번째 줄인지 알려준다. 과거를 설명하는 문장(~였습니다)은 검사하지 않으니 그대로 둘 것.
 
 ## 배포 요약
 
