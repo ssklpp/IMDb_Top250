@@ -49,6 +49,15 @@ class TestMovieDocs:
         assert "N/A" not in text
         assert "Director" not in text
 
+    def test_제목의_숫자를_연도로_읽지_않았다(self):
+        """크롤러가 제목 앞 숫자를 연도로 읽어 '2001: A Space Odyssey'가 2001년, '1917'이 1917년으로
+        들어와 있었다(실제 1968, 2019). "2001년 영화"를 물으면 큐브릭 영화가 나왔다. 크롤링을 다시
+        가져올 때 같은 오류가 섞이면 여기서 걸린다."""
+        assert BY_RANK[100][1]["year"] == "1968"
+        assert BY_RANK[121][1]["year"] == "2019"
+        suspicious = [m["title"] for _, m in DOCS if m["title"][:4].isdigit() and m["title"][:4] == m["year"]]
+        assert suspicious == []
+
     def test_메타데이터는_출처_칩이_쓰는_형태다(self):
         """sources._imdb_sources()가 rank와 title로 칩을 만든다. 키가 바뀌면 칩만 조용히 사라진다."""
         _, meta = BY_RANK[1]
