@@ -57,6 +57,28 @@ python -m tests.evals.run_evals --ids imdb-001 kobis-001
 `expected_keywords_any`(any/all)와 `rubric` 작성을 잊지 말 것. 거절 규칙처럼 **경계**를 다루는
 항목은 양쪽 방향을 모두 세운다 — `refusal-001`(거절해야 함)과 `refusal-002`(거절하면 안 됨).
 
+### `imdb_search` 항목에는 `corpus_evidence`
+
+```json
+  "expected_tools": ["imdb_search"],
+  "expected_keywords": ["프랭크", "다라본트"],
+  "corpus_evidence": ["The Shawshank Redemption", "Frank Darabont"],
+```
+
+답의 근거가 되는 **영어** 문자열을 적는다(코퍼스가 영어다). `tests/unit/test_imdb_data.py`가
+이 필드가 있는 모든 항목에 대해 문자열이 코퍼스에 실제로 있는지 확인하고, `expected_tools`에
+`imdb_search`가 있는데 이 필드가 없으면 실패한다.
+
+이유: 평가는 "답이 맞는가"만 보고 "답이 코퍼스에서 왔는가"는 보지 않는다. 예전 PDF는 칸 너비에서
+글자가 잘려 'Shawshank'가 한 번도 없었는데, 모델이 사전지식으로 답해 IMDB 항목이 전부 통과했다.
+
+`imdb_sql` 항목에는 강제하지 않는다. "1990년대 몇 편"의 답 39는 이 CSV에서만 나오는 값이라
+모델이 기억으로 맞힐 수 없고, 키워드 검사가 곧 도구를 썼다는 증거다.
+
+> 이 검사는 **답이 코퍼스에 있다**만 보장한다. **검색이 그걸 찾아오는지**(적중률)는 별개다.
+> 예: 검색어 "쇼생크 탈출 감독"을 그대로 넣으면 상위 8편에 쇼생크가 없다(코퍼스가 영어). 실제로는
+> 모델이 제목을 영어로 바꿔 검색해서 적중하지만, 그건 모델 행동이지 보장이 아니다.
+
 ## 종료 코드
 - `0` — 전체 통과
 - `1` — 하나 이상 실패 (CI에서 회귀 차단용)

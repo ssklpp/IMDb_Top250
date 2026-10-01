@@ -33,34 +33,37 @@ class _ToolMessage:
 
 
 class TestImdbSources:
-    def test_PDF_쪽번호를_1기반으로_표시한다(self):
-        """PyMuPDF의 page는 0-기반이라 그대로 쓰면 사용자에게 한 장 앞을 가리킨다."""
+    @staticmethod
+    def _movie(rank, title):
+        return _Doc({"rank": rank, "title": title, "year": "1994"})
+
+    def test_영화마다_순위와_제목을_표시한다(self):
         out = extract_sources(
             "imdb_search",
-            _ToolMessage(artifact=[_Doc({"page": 6}), _Doc({"page": 9})]),
+            _ToolMessage(artifact=[self._movie(1, "The Shawshank Redemption"), self._movie(25, "The Green Mile")]),
         )
-        assert len(out) == 1
-        assert "p.7" in out[0]["label"]
-        assert "p.10" in out[0]["label"]
-        assert out[0]["url"] is None
+        assert [s["label"] for s in out] == ["IMDB #1 The Shawshank Redemption", "IMDB #25 The Green Mile"]
+        assert all(s["url"] is None for s in out)
 
-    def test_중복_쪽번호는_한_번만_표시한다(self):
-        """retriever가 k=8로 같은 페이지의 여러 청크를 반환하는 일이 흔하다."""
-        docs = [_Doc({"page": 3}) for _ in range(8)]
+    def test_검색_순서를_유지한다(self):
+        """retriever는 관련도순으로 준다. 순위로 다시 정렬하면 가장 관련 있는 영화가 뒤로 밀린다."""
+        docs = [self._movie(25, "The Green Mile"), self._movie(1, "The Shawshank Redemption")]
         out = extract_sources("imdb_search", _ToolMessage(artifact=docs))
-        assert out[0]["label"].count("p.4") == 1
+        assert out[0]["label"].startswith("IMDB #25")
 
-    def test_쪽번호를_상한까지만_표시한다(self):
-        docs = [_Doc({"page": i}) for i in range(20)]
+    def test_상한까지만_표시한다(self):
+        """retriever가 k=8로 8편을 주므로 칩이 8개 붙지 않게 자른다."""
+        docs = [self._movie(i, f"Movie {i}") for i in range(1, 9)]
         out = extract_sources("imdb_search", _ToolMessage(artifact=docs))
-        assert out[0]["label"].count("p.") == MAX_SOURCES_PER_TOOL
+        assert len(out) == MAX_SOURCES_PER_TOOL
 
     def test_artifact가_없으면_빈_결과(self):
         """response_format이 'content'로 되돌아가면 artifact가 None이 된다."""
         assert extract_sources("imdb_search", _ToolMessage(artifact=None)) == []
 
-    def test_메타데이터에_page가_없으면_빈_결과(self):
-        out = extract_sources("imdb_search", _ToolMessage(artifact=[_Doc({})]))
+    def test_순위나_제목이_없는_문서는_건너뛴다(self):
+        """옛 PDF 인덱스의 Document는 page만 있었다. 그런 인덱스가 남아 있어도 예외 없이 넘어간다."""
+        out = extract_sources("imdb_search", _ToolMessage(artifact=[_Doc({"page": 3}), _Doc({})]))
         assert out == []
 
 
@@ -168,6 +171,18 @@ class TestKobisSources:
         """실패한 호출은 답변의 근거가 아니다. 출처로 표시하면 사용자를 오도한다."""
         err = "[TOOL_ERROR code=NETWORK_ERROR] KOBIS API 호출에 실패했습니다."
         assert extract_sources("kobis_search", _ToolMessage(content=err)) == []
+
+
+class TestImdbSqlSources:
+    def test_목록_전체를_고정_출처로_붙인다(self):
+        """SQL 결과는 표 형태 문자열이라 개별 영화로 나눌 수 없다. 자료 이름을 출처로 붙인다."""
+        out = extract_sources("imdb_sql", _ToolMessage(content="title | rating\nThe Shawshank Redemption | 9.3"))
+        assert out == [{"tool": "imdb_sql", "label": "IMDB Top 250 목록 (SQL 조회)", "url": None}]
+
+    def test_SQL이_거부되면_출처로_내보내지_않는다(self):
+        """모델이 잘못된 SQL을 보내 거부된 호출은 답의 근거가 아니다."""
+        err = "[TOOL_ERROR code=INVALID_QUERY] SQL 실행 실패: not authorized."
+        assert extract_sources("imdb_sql", _ToolMessage(content=err)) == []
 
 
 class TestUnknownTool:

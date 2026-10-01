@@ -5,14 +5,16 @@
     "expected_tools": ["imdb_search"],
     "expected_keywords": ["프랭크", "다라본트"],
     "expected_keywords_any": true,
+    "corpus_evidence": ["The Shawshank Redemption", "Frank Darabont"],
     "rubric": "쇼생크 탈출(The Shawshank Redemption)의 감독 프랭크 다라본트(Frank Darabont)를 언급해야 한다."
   },
   {
     "id": "imdb-002",
     "question": "IMDB Top 250에서 평점이 가장 높은 영화는?",
-    "expected_tools": ["imdb_search"],
+    "expected_tools": ["imdb_sql"],
     "expected_keywords": ["쇼생크", "Shawshank"],
     "expected_keywords_any": true,
+    "corpus_evidence": ["The Shawshank Redemption", "rank 1, rating 9.3"],
     "rubric": "1위 영화인 '쇼생크 탈출' 또는 'The Shawshank Redemption'을 명시해야 한다."
   },
   {
@@ -21,7 +23,25 @@
     "expected_tools": ["imdb_search"],
     "expected_keywords": ["대부", "Godfather", "코폴라"],
     "expected_keywords_any": true,
+    "corpus_evidence": ["The Godfather", "The Godfather Part II", "Francis Ford Coppola"],
     "rubric": "대부(The Godfather) 시리즈와 감독(프란시스 포드 코폴라)을 언급해야 한다."
+  },
+  {
+    "id": "sql-001",
+    "question": "IMDB Top 250에 있는 2010년대 영화 중 평점이 가장 높은 건 뭐야?",
+    "expected_tools": ["imdb_sql"],
+    "expected_keywords": ["인셉션", "Inception"],
+    "expected_keywords_any": true,
+    "corpus_evidence": ["Inception (2010)", "rating 8.8"],
+    "rubric": "2010~2019년 영화 중 평점 8.8로 가장 높은 '인셉션(Inception)'을 답해야 한다. 연도 범위와 정렬이 모두 필요한 질문이라 비슷한 영화 몇 편만 검색해서 고르면 틀린다."
+  },
+  {
+    "id": "sql-002",
+    "question": "IMDB Top 250에 1990년대 영화는 몇 편이야?",
+    "expected_tools": ["imdb_sql"],
+    "expected_keywords": ["39"],
+    "expected_keywords_any": true,
+    "rubric": "1990~1999년 개봉작 39편이라고 답해야 한다. 이 데이터에서만 나오는 개수라 도구로 세지 않으면 맞힐 수 없다."
   },
   {
     "id": "kobis-001",
@@ -117,6 +137,7 @@
     "expected_tools": ["imdb_search", "kobis_search", "web_search"],
     "expected_keywords": ["봉준호"],
     "expected_keywords_any": true,
+    "corpus_evidence": ["Gisaengchung", "Bong Joon Ho"],
     "rubric": "기생충(Parasite)의 감독 봉준호를 답변해야 한다. 어떤 도구를 써도 OK."
   }
 ]

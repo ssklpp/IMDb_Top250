@@ -3,13 +3,14 @@
 RAG 답변이 어디서 왔는지 사용자가 확인할 수 있어야 환각과 사실을 구분할 수 있다.
 도구마다 출처의 형태가 완전히 달라서 각각 따로 처리한다:
 
-- imdb_search : ToolMessage.artifact 가 list[Document]. PDF 쪽번호를 쓴다.
+- imdb_search : ToolMessage.artifact 가 list[Document]. 메타데이터의 순위·제목을 쓴다.
                 (agent.py에서 response_format="content_and_artifact"로 설정해야
                  artifact가 채워진다. 기본값 "content"면 메타데이터가 버려진다)
 - web_search  : content가 format_web_results()가 만든 JSON 문자열이다.
                 파싱해서 실제 URL을 꺼낸다 — 유일하게 클릭 가능한 출처다.
                 만드는 쪽과 읽는 쪽이 어긋나면 출처가 조용히 사라지므로 같은 모듈에 둔다.
 - kobis_search: 문자열만 반환하므로 URL이 없다. 기관명을 고정 출처로 붙인다.
+- imdb_sql    : 표 형태 문자열이라 개별 영화를 가리키지 않는다. 목록 전체를 고정 출처로 붙인다.
 
 외부 의존이 없는 순수 함수라 tests/unit에서 API 호출 없이 검증한다.
 """
@@ -17,6 +18,12 @@ RAG 답변이 어디서 왔는지 사용자가 확인할 수 있어야 환각과
 import json
 
 KOBIS_HOME = "https://www.kobis.or.kr"
+
+# 결과에 URL이 없는 도구는 자료 이름을 고정 출처로 붙인다. 도구 이름 → (라벨, URL)
+FIXED_SOURCES = {
+    "kobis_search": ("영화진흥위원회 KOBIS 오픈API", KOBIS_HOME),
+    "imdb_sql": ("IMDB Top 250 목록 (SQL 조회)", None),
+}
 
 MAX_SOURCES_PER_TOOL = 4
 
@@ -55,22 +62,20 @@ def format_web_results(raw) -> str | None:
 
 
 def _imdb_sources(artifact) -> list[dict]:
+    """검색된 영화마다 칩 하나. 검색 순서(관련도순)를 그대로 둔다 — 순위로 다시 정렬하면
+    질문과 가장 가까운 영화가 뒤로 밀린다. 문서 하나가 영화 한 편이라 중복은 없다."""
     if not isinstance(artifact, list):
         return []
-    pages: list[int] = []
+    out: list[dict] = []
     for doc in artifact:
         meta = getattr(doc, "metadata", None)
-        if not isinstance(meta, dict):
+        if not isinstance(meta, dict) or not meta.get("rank") or not meta.get("title"):
             continue
-        page = meta.get("page")
-        if isinstance(page, int) and page not in pages:
-            pages.append(page)
-    if not pages:
-        return []
-    # PyMuPDF의 page는 0-기반이라 사람이 읽는 쪽번호로 1을 더한다.
-    shown = sorted(pages)[:MAX_SOURCES_PER_TOOL]
-    label = "IMDB Top 250 자료 " + ", ".join(f"p.{p + 1}" for p in shown)
-    return [{"tool": "imdb_search", "label": label, "url": None}]
+        label = f"IMDB #{meta['rank']} {meta['title']}"
+        out.append({"tool": "imdb_search", "label": label, "url": None})
+        if len(out) >= MAX_SOURCES_PER_TOOL:
+            break
+    return out
 
 
 def _web_sources(content) -> list[dict]:
@@ -112,16 +117,11 @@ def extract_sources(tool_name: str, output) -> list[dict]:
     if tool_name == "web_search":
         content = getattr(output, "content", output)
         return _web_sources(content)
-    if tool_name == "kobis_search":
+    if tool_name in FIXED_SOURCES:
         content = getattr(output, "content", output)
         # 도구가 에러를 반환했으면 근거가 아니므로 출처로 내보내지 않는다.
         if isinstance(content, str) and content.startswith("[TOOL_ERROR"):
             return []
-        return [
-            {
-                "tool": "kobis_search",
-                "label": "영화진흥위원회 KOBIS 오픈API",
-                "url": KOBIS_HOME,
-            }
-        ]
+        label, url = FIXED_SOURCES[tool_name]
+        return [{"tool": tool_name, "label": label, "url": url}]
     return []

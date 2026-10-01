@@ -246,6 +246,7 @@ export default function Home() {
             const toolName = payload.slice(5);
             const label =
               toolName === "imdb_search"  ? "IMDB Top 250 검색 중..." :
+              toolName === "imdb_sql"     ? "IMDB Top 250 순위·평점 조회 중..." :
               toolName === "kobis_search" ? "한국 개봉 영화 검색 중..." :
               toolName === "web_search"   ? "웹 검색 중..." :
               `${toolName} 실행 중...`;

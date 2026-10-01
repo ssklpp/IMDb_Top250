@@ -24,7 +24,7 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 
 - `ubuntu-latest` + `.python-version`(3.13) — **nixpacks가 쓰는 것과 같은 조건**
 - `pip install -r requirements.txt` — Railway가 실행하는 것과 같은 명령
-- 서드파티 19개를 실제로 import — 설치 성공과 사용 가능은 다르다.
+- 서드파티 18개를 실제로 import — 설치 성공과 사용 가능은 다르다.
   특히 `AsyncSqliteSaver`는 `langgraph-checkpoint-sqlite`라는 **별도 패키지**라 빠지기 쉽다.
 - `requirements.in`과 락의 드리프트 검사 — `.in`에 추가하고 `gen_lock.py`를 잊는 실수를 막는다
 
@@ -34,7 +34,7 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 
 `python` 잡이 수십 초에 끝나는 건 단위 테스트 대상(`kobis_format.py`, `sources.py`)이
 표준 라이브러리만 쓰도록 분리돼 있어 **pytest만 설치하면 되기 때문**이다.
-반면 `deps` 잡은 락 78개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
+반면 `deps` 잡은 락 77개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
 병렬로 돌아 전체 소요 시간은 크게 늘지 않는다.
 
 `agent.py`/`server.py`는 import만 해도 벡터스토어 빌드와 API 키를 요구해 CI에서 실행할 수
@@ -43,8 +43,11 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 
 주의사항:
 - **`.python-version`을 `setup-python`이 읽는다.** 로컬·Railway·CI가 같은 파일 하나를 본다.
-- `evals.yml`은 `vectorstore`를 **PDF 해시로 캐시**한다. 청크 파라미터(`chunk_size` 등)를
-  바꾸면 캐시가 낡으므로 캐시 키의 `vectorstore-v1`을 `v2`로 올릴 것.
+- `evals.yml`은 `vectorstore`를 **`imdb_top250.csv` + `imdb_data.py` 해시로 캐시**한다. 둘 중
+  하나가 바뀌면 키가 바뀌어 새로 만든다. `agent.py`도 같은 내용의 지문으로 인덱스 파일 이름을
+  정하므로 손으로 올릴 버전 번호는 없다.
+- Railway 볼륨(`/app/vectorstore`)에는 PDF 시절의 `index.faiss`·`index.pkl`이 남아 있다. 더는
+  읽히지 않으니 두어도 되고, 지운다면 **같은 폴더의 `checkpoints.sqlite*`는 지우지 말 것**(대화 기록).
 - 평가를 자동 실행하려면 `evals.yml`의 주석 처리된 `push`/`schedule` 트리거를 풀면 되지만,
   **실행마다 과금된다.**
 

@@ -39,7 +39,7 @@ jobs:
         run: >
           python -m compileall -q
           agent.py server.py logging_config.py imdb_rag.py
-          kobis_format.py sources.py scripts tests
+          kobis_format.py sources.py imdb_data.py scripts tests
 
       - name: 단위 테스트
         run: pytest tests/unit/ -q
@@ -123,9 +123,8 @@ jobs:
               ("pydantic", "BaseModel"),
               ("langchain.agents", "create_agent"),
               ("langchain_openai", "ChatOpenAI"),
-              ("langchain_text_splitters", "RecursiveCharacterTextSplitter"),
               ("langchain_community.vectorstores", "FAISS"),
-              ("langchain_community.document_loaders", "PyMuPDFLoader"),
+              ("langchain_core.documents", "Document"),
               ("langchain_core.tools", "tool"),
               ("langgraph.checkpoint.memory", "MemorySaver"),
               ("langgraph.checkpoint.sqlite", "SqliteSaver"),
@@ -151,7 +150,7 @@ jobs:
       # 앱 모듈(agent.py)은 import만 해도 벡터스토어를 빌드하려 해서 CI에서 실행할 수 없다.
       # 외부 의존이 없는 모듈만 실제로 불러 본다.
       - name: 자체 모듈 import 확인
-        run: python -c "import kobis_format, sources, logging_config; print('OK')"
+        run: python -c "import kobis_format, sources, imdb_data, logging_config; print('OK')"
 
   frontend:
     name: Frontend — lint + build

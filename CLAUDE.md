@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 프로젝트 개요
-IMDB Top 250 영화 PDF를 기반으로 한 AI 영화 전문가 챗봇. RAG(PDF 검색), KOBIS 한국 영화 데이터베이스 API, Tavily 웹 검색을 결합한 LangGraph 에이전트 구조. FastAPI 백엔드 + Next.js 프론트엔드로 웹 서비스 제공.
+IMDB Top 250 영화 목록(`imdb_top250.csv`)을 기반으로 한 AI 영화 전문가 챗봇. RAG(영화 목록 검색), KOBIS 한국 영화 데이터베이스 API, Tavily 웹 검색을 결합한 LangGraph 에이전트 구조. FastAPI 백엔드 + Next.js 프론트엔드로 웹 서비스 제공.
 
 ## 규칙 파일 색인
 
@@ -13,7 +13,7 @@ IMDB Top 250 영화 PDF를 기반으로 한 AI 영화 전문가 챗봇. RAG(PDF 
 
 | 무엇을 고칠 때 | 읽을 파일 |
 |---|---|
-| KOBIS 6개 모드, 웹 검색 도구를 바꾼 이유, 도구 인자 검증 규칙 | `rules/tools.md` |
+| IMDB 검색과 SQL을 나눈 이유·SQL 실행 제한, KOBIS 6개 모드, 웹 검색 도구, 도구 인자 검증 | `rules/tools.md` |
 | 답변 출처 추출, 입력 검증, 헬스체크, 응답 캐시, 레이트리밋, 로깅 | `rules/server.md` |
 | CI 잡을 그렇게 나눈 이유, 패키지 추가 절차, 배포 주의사항 | `rules/ci-deps.md` |
 | 프론트엔드(`web/`) 레이아웃·모바일·프록시 에러 | `web/AGENTS.md` |
@@ -76,7 +76,7 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
          → /api/chat (route.ts, 내부 프록시)
          → FastAPI (port 8000, /api/chat)
          → LangGraph 에이전트
-         → imdb_search (FAISS) / kobis_search (KOBIS API) / web_search (Tavily)
+         → imdb_search (FAISS) / imdb_sql (SQLite) / kobis_search (KOBIS API) / web_search (Tavily)
 ```
 
 `web/app/api/chat/route.ts`는 순수 프록시로, 스트리밍 응답을 그대로 브라우저에 전달합니다. FastAPI 주소는 `web/.env.local`의 `BACKEND_URL`로 설정합니다.
@@ -87,13 +87,14 @@ python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 logging_config.py ← 공통: structlog JSON 로거 + ContextVar(session_id/request_id)
 kobis_format.py   ← 순수 함수: 영화 판별(pick_movie), 날짜/응답 가공, 현재 날짜 문장·집계 가능일 판정. 외부 의존 없음
 sources.py        ← 순수 함수: 도구 출력에서 답변 출처 추출. 외부 의존 없음
+imdb_data.py      ← 순수 함수: IMDB CSV → 영화별 검색 문서, 인덱스 지문, 읽기 전용 SQL 실행. 외부 의존 없음
 agent.py          ← vectorstore 캐시, LLM, tools, build_agent() 팩토리
 imdb_rag.py       ← CLI 루프 (sync SqliteSaver)
 server.py         ← FastAPI 앱 (lifespan에서 AsyncSqliteSaver 준비, 스트리밍/에러 분류)
 scripts/gen_lock.py ← requirements.in → requirements.txt 락 생성
 scripts/check_docs.py ← 문서의 숫자·로그 이벤트·제어 문자·참조 경로를 코드와 대조 (CI에서 실행)
 scripts/trace.py    ← 질문 하나를 실행하며 도구 호출 인자·결과·토큰을 추적 (진단용, 과금)
-tests/unit/       ← pytest 단위 테스트 (kobis_format, sources)
+tests/unit/       ← pytest 단위 테스트 (kobis_format, sources, imdb_data + 골든셋 근거 검사)
 tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 ```
 
@@ -107,12 +108,24 @@ tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 | `tests/evals` | `MemorySaver`(기본값) | 항목마다 새 thread라 영속화가 불필요하고, 실제 대화 DB를 건드리지 않게 격리 |
 
 ### 벡터스토어 캐시
-`agent.py` 시작 시 `vectorstore/index.faiss` 존재 여부를 확인합니다.
-- **존재**: `FAISS.load_local()`로 즉시 로드 (임베딩 API 호출 없음)
-- **없음**: PDF 파싱 → 청크 분할(chunk_size=800, chunk_overlap=100) → 임베딩 생성 → `vectorstore.save_local()`로 저장
+데이터는 `imdb_top250.csv`(250편)다. **영화 한 편 = 문서 한 개**로 나누지 않는다(행이 130~380자).
+감독·배우·줄거리를 전부 본문(`page_content`)에 넣는다 — 검색 도구는 본문만 LLM에 넘기므로
+메타데이터에만 두면 모델이 볼 수 없다. 메타데이터(`rank`·`title`·`year`)는 출처 칩용이다.
 
-Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 8개 청크를 반환합니다.
-청크 파라미터를 변경할 경우 `vectorstore/` 폴더를 삭제하고 재시작해야 반영됩니다.
+인덱스 파일 이름이 **임베딩할 내용의 지문**(`imdb_<해시12자>.faiss`)이다.
+- **같은 이름이 있음**: `FAISS.load_local()`로 즉시 로드 (임베딩 API 호출 없음)
+- **없음**: CSV → 문서 250개 → 임베딩 → 그 이름으로 저장
+
+CSV나 `imdb_data.py`의 변환 형식이 바뀌면 이름이 달라져 **자동으로 새로 만든다.** 손으로 지울 것이
+없다. 고정 이름(`index.faiss`)을 쓰던 시절에는 Railway 볼륨의 옛 인덱스가 재배포 후에도 계속 쓰였다.
+지문은 파일 바이트가 아니라 읽어낸 내용으로 만든다(git autocrlf로 OS마다 줄바꿈이 달라서).
+
+> **PDF를 쓰지 않는 이유**: 예전 `imdb_top250.pdf`는 표 칸 너비에서 글자를 잘라 그린 것이었다.
+> 'The Shawshank Redemption'이 'The Shaws'로 추출돼 코퍼스에 'Shawshank'가 한 번도 없었고,
+> IMDB 평가는 모델의 사전지식으로 통과했다. 그려지기 전에 잘린 것이라 어떤 파서(VLM 포함)로도
+> 복원되지 않는다. 자세한 경위는 `imdb_data.py` 모듈 docstring.
+
+Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 영화 8편을 반환합니다.
 
 ### 대화 영속화
 각 세션은 `thread_id`(UUID)로 구분되며, **SQLite 체크포인터에 저장되어 프로세스가 재시작돼도 유지됩니다.**
@@ -165,6 +178,9 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
   KOBIS는 진행 중인 기간을 주지 않으므로 오늘 날짜로 박스오피스를 조회하지 말 것. `NO_DATA`를 받으면
   **연도를 바꾸지 말고** 하루·일주일 이전으로 재호출. 이 규칙을 지우면 1년 전 데이터 버그가 재발한다 —
   고칠 때는 평가 `kobis-006`을 돌릴 것.
+- **IMDB 도구 라우팅** — 정렬·필터·집계("평점 1위", "몇 편", "~년대")는 `imdb_sql`, 특정 작품·추천은
+  `imdb_search`. 검색은 8편만 가져와서 그 안에서 고르면 틀린다. 이 규칙을 지우면 "평점 1위"에
+  'The Dark Knight'라고 답한다 — 고칠 때는 평가 `imdb-002`·`sql-001`·`sql-002`를 돌릴 것.
 
 ### 답변 범위 규칙을 수정할 때 주의할 것
 `SYSTEM_PROMPT`의 `## 답변 범위` 섹션은 **세 부분이 한 세트**다. 하나만 고치면 경계가 무너진다.
@@ -182,26 +198,29 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 78개 + 문서-코드 대조 (pytest만 설치) | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 114개 + 문서-코드 대조 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
-| `evals.yml` | — | 에이전트 회귀 평가 15개 (`workflow_dispatch` 수동) | 발생 |
+| `evals.yml` | — | 에이전트 회귀 평가 17개 (`workflow_dispatch` 수동) | 발생 |
 
 의존성은 **로컬과 Railway가 같은 것을 설치하도록** 네 파일로 고정돼 있다. 이 구조를 깨뜨리지 말 것.
 
 | 파일 | 역할 |
 |---|---|
 | `.python-version` | `3.13`. pyenv(로컬)와 nixpacks(Railway)가 **같은 파일을 읽는다**. nixpacks 지원 상한이 3.13이므로 그 이상으로 올릴 수 없다. |
-| `requirements.in` | 사람이 편집하는 **직접 의존성 13개** (프로덕션). |
-| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 78개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
+| `requirements.in` | 사람이 편집하는 **직접 의존성 12개** (프로덕션). |
+| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 77개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
 | `requirements-dev.txt` | 개발 전용(pytest). **프로덕션 락과 분리**되어 Railway에는 설치되지 않는다. |
 
 ## 코드 규칙
 
-- **순수 로직은 `kobis_format.py` / `sources.py`에 둔다.** `agent.py`는 import만 해도 벡터스토어를
-  로드하고 OpenAI 클라이언트를 만든다(약 6초 + API 키 필요). 로직을 떼어놨기 때문에 단위 테스트가
-  키 없이 0.1초에 끝나고, CI의 `python` 잡이 pytest만 설치하면 된다. **새 순수 함수도 이 두 모듈에
-  넣을지 먼저 검토할 것.**
+- **순수 로직은 `kobis_format.py` / `sources.py` / `imdb_data.py`에 둔다.** `agent.py`는 import만 해도
+  벡터스토어를 로드하고 OpenAI 클라이언트를 만든다(약 6초 + API 키 필요). 로직을 떼어놨기 때문에 단위
+  테스트가 키 없이 0.1초에 끝나고, CI의 `python` 잡이 pytest만 설치하면 된다. **새 순수 함수도 이
+  모듈들에 넣을지 먼저 검토할 것.**
+- **`imdb_search`를 기대하는 평가 항목에는 `corpus_evidence`를 적는다.** 답의 근거가 되는 영어 문자열이
+  코퍼스에 실제로 있는지 단위 테스트가 확인한다. 없으면 그 항목은 검색이 아니라 모델의 사전지식을
+  채점한다 — 잘린 PDF 시절 IMDB 평가가 정확히 그 상태로 15/15를 통과했다.
 - **`print()` 금지.** `from logging_config import get_logger; log = get_logger("module_name")`.
 - **예외를 로깅할 때 `str(e)`를 넣지 말 것.** KOBIS는 API 키를 쿼리 파라미터로 받는데 `requests`
   예외의 `str()`에는 요청 URL 전문이 들어간다. 실제로 키가 평문으로 기록되고 있었다.
@@ -223,12 +242,13 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | 이걸 바꾸면 | 이것도 함께 | 안 고치면 | 상세 |
 |---|---|---|---|
 | `server.py`의 센티넬(`\x1f…`) 추가 | `page.tsx`의 정규식 alternation | 신호 문자가 답변에 그대로 출력 | `rules/server.md` |
+| 새 도구 추가 | `page.tsx`의 도구 상태 라벨, URL 없는 도구면 `sources.FIXED_SOURCES` | 상태가 영어 함수명으로 표시, 출처 칩 없음 | `rules/server.md` |
 | `MAX_QUESTION_CHARS`(2000) | `server.py`와 `page.tsx` 양쪽 | 입력창과 서버 제한이 어긋남 | `rules/server.md` |
 | `sources.format_web_results()` | `sources._web_sources()` | 출처 칩만 사라짐 | `rules/server.md` |
 | 새 `tool_error` 코드 | `SYSTEM_PROMPT`의 `## 도구 에러 처리` | LLM이 대처 방법을 모름 | `rules/tools.md` |
-| `imdb_tool`의 `response_format` | 되돌리지 말 것(`content_and_artifact`) | PDF 쪽번호 출처가 사라짐 | `rules/server.md` |
+| `imdb_tool`의 `response_format` | 되돌리지 말 것(`content_and_artifact`) | IMDB 출처 칩이 사라짐 | `rules/server.md` |
+| `imdb_data.movie_docs()`의 메타데이터 키 | `sources._imdb_sources()` | IMDB 출처 칩만 사라짐 | `rules/server.md` |
 | `requirements.in` | `scripts/gen_lock.py` 재생성 + `ci.yml`의 import 목록 | CI 실패 또는 배포 불일치 | `rules/ci-deps.md` |
-| 청크 파라미터(`chunk_size` 등) | `vectorstore/` 인덱스 삭제 + `evals.yml` 캐시 키 `v1`→`v2` | 예전 인덱스를 계속 사용 | 이 문서 |
 | `SYSTEM_PROMPT`의 답변 범위 | 평가 `refusal-001`과 `refusal-002`를 **둘 다** 실행 | 과잉 거절을 놓침 | 이 문서 |
 | 에이전트에 넘기는 메시지 구성 (새 진입점 포함) | 질문 앞에 `SystemMessage(format_date_context(today_kst()))` | 상대 기간 질문이 엉뚱한 연도로 답함 | 이 문서 |
 
@@ -242,9 +262,9 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 3. `web/`를 고쳤으면 `npm run lint` + `npm run build`.
 4. 패키지를 건드렸으면 `scripts/gen_lock.py`로 락 재생성 (상세: `rules/ci-deps.md`).
 5. 도구·프롬프트·모델을 고쳤으면 에이전트 평가. **과금된다** — 관련 항목(`--ids`)부터 돌리고
-   프롬프트·모델 변경은 전체 15개를 돌린다.
+   프롬프트·모델 변경은 전체 17개를 돌린다.
 
-현재 상태: 단위 테스트 78개 전부 통과, 평가 **15/15 전부 통과**.
+현재 상태: 단위 테스트 114개 전부 통과, 평가 **17/17 전부 통과**.
 
 숫자(테스트·평가·의존성 개수)는 여러 문서에 흩어져 있다. 어긋나면 `scripts/check_docs.py`가
 어느 파일 몇 번째 줄인지 알려준다. 과거를 설명하는 문장(~였습니다)은 검사하지 않으니 그대로 둘 것.

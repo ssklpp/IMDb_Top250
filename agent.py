@@ -8,12 +8,11 @@ from typing import Literal
 
 import requests
 from langchain.agents import create_agent
-from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from langchain_core.tools import tool
 from langchain_core.tools.retriever import create_retriever_tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel, Field, field_validator
 from tenacity import (
@@ -23,6 +22,14 @@ from tenacity import (
     wait_exponential,
 )
 
+from imdb_data import (
+    CSV_PATH,
+    SQL_SCHEMA,
+    SqlRejected,
+    corpus_digest,
+    movie_docs,
+    query_movies,
+)
 from kobis_format import (
     DETAIL_MAX_CANDIDATES,
     boxoffice_too_recent,
@@ -69,20 +76,26 @@ BOXOFFICE_FALLBACK_LABEL = {
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
-if os.path.exists(f"{VECTORSTORE_PATH}/index.faiss"):
-    log.info("vectorstore.cache_hit", path=VECTORSTORE_PATH)
+# 인덱스 이름에 임베딩할 내용의 지문을 넣는다. CSV나 변환 형식(imdb_data.py)이 바뀌면
+# 이름이 달라져 자동으로 새로 만든다. Railway 볼륨은 재배포해도 남기 때문에, 고정된
+# 이름(index.faiss)을 쓰던 시절에는 옛 인덱스가 계속 쓰였다(로컬 72청크, 배포 87청크).
+_movie_docs = movie_docs()
+INDEX_NAME = f"imdb_{corpus_digest(_movie_docs)}"
+
+if os.path.exists(f"{VECTORSTORE_PATH}/{INDEX_NAME}.faiss"):
+    log.info("vectorstore.cache_hit", path=VECTORSTORE_PATH, index=INDEX_NAME)
     vectorstore = FAISS.load_local(
-        VECTORSTORE_PATH, embeddings, allow_dangerous_deserialization=True
+        VECTORSTORE_PATH,
+        embeddings,
+        index_name=INDEX_NAME,
+        allow_dangerous_deserialization=True,
     )
 else:
-    log.info("vectorstore.build_start", pdf="imdb_top250.pdf")
-    loader = PyMuPDFLoader("imdb_top250.pdf")
-    docs = loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    split_documents = text_splitter.split_documents(docs)
-    vectorstore = FAISS.from_documents(documents=split_documents, embedding=embeddings)
-    vectorstore.save_local(VECTORSTORE_PATH)
-    log.info("vectorstore.build_done", chunks=len(split_documents))
+    log.info("vectorstore.build_start", source=CSV_PATH.name, index=INDEX_NAME)
+    docs = [Document(page_content=text, metadata=meta) for text, meta in _movie_docs]
+    vectorstore = FAISS.from_documents(documents=docs, embedding=embeddings)
+    vectorstore.save_local(VECTORSTORE_PATH, index_name=INDEX_NAME)
+    log.info("vectorstore.build_done", docs=len(docs))
 
 retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 llm = ChatOpenAI(model_name="gpt-5.4-mini", temperature=0)
@@ -90,11 +103,33 @@ llm = ChatOpenAI(model_name="gpt-5.4-mini", temperature=0)
 imdb_tool = create_retriever_tool(
     retriever,
     name="imdb_search",
-    description="IMDB Top 250 PDF에서 영화 정보를 검색합니다. 영화 제목, 감독, 출연진, 평점 등을 찾을 때 사용하세요.",
-    # content만 쓰면 검색된 Document의 메타데이터(PDF 쪽번호)가 버려진다.
+    description="IMDB Top 250 목록에서 영화 정보를 검색합니다. 영화 제목, 감독, 출연진, 평점 등을 찾을 때 사용하세요.",
+    # content만 쓰면 검색된 Document의 메타데이터(순위·제목)가 버려진다.
     # 출처 표시에 필요하므로 artifact로 원본 Document를 함께 받는다.
     response_format="content_and_artifact",
 )
+
+
+# 벡터 검색(imdb_search)은 의미가 가까운 8편만 가져와서 정렬·집계를 못 한다. "평점 1위"를 물으면
+# 검색된 8편 안에서 최고를 골라 틀린다. 같은 데이터를 SQL로 조회하는 도구를 따로 둔다.
+# 실행 제한(읽기 전용, 상한)은 imdb_data.query_movies()에 있다.
+@tool(
+    description=(
+        "IMDB Top 250 목록에 SQLite SELECT 한 문장을 실행합니다. 평점·순위·연도로 정렬하거나 "
+        "거르는 질문, 개수를 세는 질문에 쓰세요(예: 평점 1위, 1990년대 영화 수, 특정 감독 작품 중 최고 평점). "
+        f"테이블: {SQL_SCHEMA}. 값은 영어이고 비영어권 영화는 원제입니다(기생충=Gisaengchung). "
+        "director·actors는 쉼표로 구분된 이름이라 LIKE '%Nolan%'처럼 찾으세요."
+    )
+)
+def imdb_sql(query: str) -> str:
+    log.info("imdb.sql_request", query_len=len(query))
+    try:
+        text, rows = query_movies(query)
+    except SqlRejected as e:
+        log.info("imdb.sql_rejected", error=type(e.__cause__ or e).__name__)
+        return tool_error("INVALID_QUERY", f"{e} 테이블: {SQL_SCHEMA}")
+    log.info("imdb.sql_done", rows=rows)
+    return text
 
 
 # web_search는 langchain_tavily.TavilySearch를 쓰지 않고 Tavily API를 직접 호출한다.
@@ -128,7 +163,7 @@ def _tavily_search(api_key: str, query: str) -> dict:
 
 @tool
 def web_search(query: str) -> str:
-    """인터넷에서 최신 영화 정보를 검색합니다. PDF에 없는 신작, 박스오피스, 최신 수상 내역 등을 찾을 때 사용하세요."""
+    """인터넷에서 최신 영화 정보를 검색합니다. IMDB 목록에 없는 신작, 박스오피스, 최신 수상 내역 등을 찾을 때 사용하세요."""
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
         log.warning("web.no_api_key")
@@ -484,6 +519,7 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 
 ## 도구 선택 기준
 - **imdb_search**: IMDB Top 250의 명작/고전 영화 정보 (평점, 감독, 출연진, 줄거리). 한국 영화여도 Top 250에 포함된 작품은 여기서 먼저 찾으세요.
+- **imdb_sql**: IMDB Top 250을 **정렬·필터·집계**할 때 — "평점이 가장 높은", "몇 편", "~년대", "감독별". imdb_search는 질문과 비슷한 영화 8편만 가져오므로 이런 질문에 쓰면 그 8편 안에서 고르게 되어 틀립니다.
 - **kobis_search**: 한국 개봉 영화, 한국 박스오피스, 국내 상영작 검색. search_type 사용법:
   - `movie`: 영화 목록 검색(여러 후보를 훑을 때). query에 영화 제목.
   - `detail`: 특정 영화 한 편의 상세정보 — 출연진과 배역, 관람등급, 상영시간, 장르, 제작/배급사. query에 **영화 제목**을 그대로 넣으면 됩니다(영화코드를 따로 찾을 필요 없음).
@@ -492,7 +528,7 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
   - **상대적인 기간은 대화 첫머리에 주어진 오늘 날짜를 기준으로 계산하세요.** "어제"=오늘-1일, "지난 주"/"지난 주말"=오늘-7일이 속한 주입니다.
   - **KOBIS는 진행 중인 기간을 제공하지 않습니다.** 일별은 어제까지, 주간·주말·주중은 지난 주까지만 조회됩니다. 오늘 날짜로 박스오피스를 조회하지 마세요.
   - 출연진·배역·관람등급·러닝타임 질문에는 `movie`가 아니라 `detail`을 사용하세요.
-- **web_search**: 위 두 도구로 부족할 때 — 최신 수상 내역, 해외 신작, 최신 뉴스 등.
+- **web_search**: 위 도구들로 부족할 때 — 최신 수상 내역, 해외 신작, 최신 뉴스 등.
 
 ## 도구 에러 처리
 - 도구 응답이 `[TOOL_ERROR code=...]`로 시작하면 도구 실패를 의미합니다.
@@ -509,7 +545,7 @@ SYSTEM_PROMPT = """당신은 영화 전문가 AI 어시스턴트입니다.
 - 답변은 3~6 문장 또는 짧은 목록 형태로 간결하게 유지하세요.
 - 도구 호출 결과를 그대로 복사하지 말고, 사용자 질문에 맞게 요약/재구성하세요."""
 
-TOOLS = [imdb_tool, web_search, kobis_search]
+TOOLS = [imdb_tool, imdb_sql, web_search, kobis_search]
 
 
 def build_agent(checkpointer=None):

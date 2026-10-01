@@ -1,8 +1,8 @@
 name: Agent Evals
 
 # 에이전트 회귀 평가. ci.yml과 분리한 이유는 **실제 비용이 들기 때문**이다.
-# 골든셋 15개 전부가 OpenAI/Tavily/KOBIS를 실호출하고, 벡터스토어 캐시가 없으면
-# PDF 임베딩 생성까지 한다. 그래서 기본은 수동 실행이다.
+# 골든셋 17개 전부가 OpenAI/Tavily/KOBIS를 실호출하고, 벡터스토어 캐시가 없으면
+# 영화 목록 임베딩 생성까지 한다. 그래서 기본은 수동 실행이다.
 #
 # 자동 실행을 원하면 아래 트리거의 주석을 풀면 된다. 다만 푸시마다 과금된다.
 on:
@@ -55,14 +55,14 @@ jobs:
       - name: 의존성 설치
         run: pip install -r requirements.txt
 
-      # vectorstore/는 gitignore라 CI에 없다. 캐시가 없으면 매 실행마다
-      # PDF를 다시 임베딩해 시간과 비용이 든다.
-      # 청크 파라미터(chunk_size 등)를 바꾸면 캐시가 낡으므로 아래 v1을 v2로 올릴 것.
+      # vectorstore/는 gitignore라 CI에 없다. 캐시가 없으면 매 실행마다 250편을 다시 임베딩한다.
+      # 키는 임베딩할 내용(CSV)과 변환 코드(imdb_data.py)의 해시라 둘 중 하나가 바뀌면 자동으로
+      # 새로 만든다. agent.py도 같은 내용으로 인덱스 파일 이름을 정하므로 손으로 올릴 버전은 없다.
       - name: 벡터스토어 캐시
         uses: actions/cache@v4
         with:
           path: vectorstore
-          key: vectorstore-v1-${{ hashFiles('imdb_top250.pdf') }}
+          key: vectorstore-${{ hashFiles('imdb_top250.csv', 'imdb_data.py') }}
 
       - name: 평가 실행
         env:

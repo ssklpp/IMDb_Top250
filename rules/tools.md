@@ -1,7 +1,36 @@
-# 도구 규칙 (`agent.py`의 3개 도구)
+# 도구 규칙 (`agent.py`의 4개 도구)
 
-> `imdb_search` / `kobis_search` / `web_search`를 고칠 때 먼저 읽을 것.
+> `imdb_search` / `imdb_sql` / `kobis_search` / `web_search`를 고칠 때 먼저 읽을 것.
 > 에러 계약(`[TOOL_ERROR code=…]`)과 코드 목록은 `CLAUDE.md`에 있다.
+
+## IMDB 도구 두 개 — 검색과 SQL
+같은 250편을 두 방식으로 조회한다. 데이터 변환과 SQL 실행은 `imdb_data.py`(순수 함수)에 있다.
+
+| 도구 | 방식 | 맞는 질문 | 못 하는 것 |
+|---|---|---|---|
+| `imdb_search` | 벡터 검색, 의미가 가까운 8편 | "쇼생크 감독", "놀란 영화 추천", 줄거리·분위기 | 정렬·집계. 8편 안에서만 고른다 |
+| `imdb_sql` | 모델이 쓴 SELECT를 SQLite에서 실행 | "평점 1위", "1990년대 몇 편", "감독별 작품 수" | 의미 검색("우울할 때 볼 영화") |
+
+**왜 둘인가**: CSV로 바꾼 뒤 "평점이 가장 높은 영화는?"에 모델이 검색된 8편 안에서 최고를 골라
+'The Dark Knight'(9.1)라고 답했다. 정답 쇼생크(9.3)가 그 8편에 없었다. 예전 PDF 시절엔 검색 결과가
+쓸모없어서 모델이 기억으로 맞혔기 때문에 드러나지 않았다. 라우팅 규칙은 `SYSTEM_PROMPT`의
+`## 도구 선택 기준`에 있고 평가 `imdb-002`·`sql-001`·`sql-002`가 고정한다.
+
+**SQL 실행 제한** (`imdb_data.query_movies`) — SQL은 모델이 쓰고, 모델은 웹 검색 결과에 섞인
+지시(프롬프트 인젝션)에 영향받을 수 있다. 그래서 방어를 프롬프트가 아니라 코드에 둔다.
+- 요청마다 새 **메모리 DB**. 파일도, 요청 사이 공유 상태도 없다(스레드 문제도 없다).
+- `set_authorizer`로 **SELECT·읽기·함수만 허용**. INSERT·DROP·ATTACH(파일 생성)·PRAGMA·재귀 CTE·
+  `load_extension`이 실행 전에 거부된다.
+- 값 길이 1MB 상한(`randomblob(1e9)`로 1GB 할당 차단), 실행 단계 상한(3중 조인 1,500만 행 차단),
+  결과 30행 상한, SQL 2,000자 상한.
+- 거부되면 `[TOOL_ERROR code=INVALID_QUERY]`에 SQLite 메시지와 스키마를 붙여 돌려준다. 프롬프트의
+  기존 규칙대로 모델이 고쳐서 다시 호출한다.
+- 위 공격 9가지를 `tests/unit/test_imdb_data.py`가 하나씩 고정한다. **새 허용 동작을 추가할 때는 거기에
+  거부 사례도 같이 추가할 것.**
+
+스키마는 `imdb_data.SQL_SCHEMA` 한 곳에 있고 테이블 생성·도구 설명·에러 메시지가 모두 그걸 쓴다.
+CSV의 `cast` 칼럼은 **`actors`**로 바꿨다 — `cast`는 SQL 키워드라 `SELECT title, cast FROM movies`가
+syntax error였다. 감독 `N/A`는 NULL로 넣는다(감독별 집계에 'N/A'라는 감독이 생기지 않게).
 
 ## KOBIS 도구 모드 (`search_type`)
 `kobis_search`는 6개 모드를 지원합니다. 모두 KOBIS 오픈API 실호출로 검증되었습니다.

@@ -9,12 +9,19 @@
 
 | 도구 | 출처를 어디서 얻는가 | 표시 |
 |---|---|---|
-| `imdb_search` | `ToolMessage.artifact`의 `list[Document]` → `metadata["page"]` | PDF 쪽번호 (0-기반이라 +1) |
+| `imdb_search` | `ToolMessage.artifact`의 `list[Document]` → `metadata["rank"]`·`["title"]` | 영화마다 칩 하나(`IMDB #1 The Shawshank Redemption`), 검색 순서 유지, 최대 4개 |
 | `web_search` | artifact가 없다. **`content`가 `format_web_results()`가 만든 JSON 문자열**이라 파싱해서 `results[].url` 추출 | 클릭 가능한 원문 링크 |
 | `kobis_search` | 문자열만 반환해 URL이 없다 | 기관 홈페이지 고정 |
+| `imdb_sql` | 표 형태 문자열이라 개별 영화로 나눌 수 없다 | `IMDB Top 250 목록 (SQL 조회)` 고정 |
+
+URL 없는 도구의 고정 출처는 `sources.FIXED_SOURCES` 한 곳에 있다. `[TOOL_ERROR`로 시작하는 응답은
+두 도구 모두 출처로 내보내지 않는다.
 
 - `imdb_tool`은 `response_format="content_and_artifact"`로 생성해야 `artifact`가 채워집니다.
-  기본값 `"content"`로 되돌리면 **쪽번호 출처가 조용히 사라집니다.**
+  기본값 `"content"`로 되돌리면 **IMDB 출처가 조용히 사라집니다.** 메타데이터 키는
+  `imdb_data.movie_docs()`가 정한다. 키 이름을 바꾸면 이쪽도 함께.
+- 출처 칩은 "검색해 온 자료"이지 "답에 쓴 자료"가 아닙니다. 검색이 엉뚱한 영화를 가져오고 모델이
+  사전지식으로 답하면 무관한 영화가 출처로 붙습니다. 검색 적중 여부는 평가에서 따로 봐야 합니다.
 - KOBIS 응답이 `[TOOL_ERROR`로 시작하면 출처로 내보내지 않습니다. 실패한 호출은 답변의 근거가 아닙니다.
 - 출처 센티넬은 응답 캐시에도 저장됩니다. 안 그러면 캐시 HIT일 때만 출처가 사라져 표시가 달라집니다.
 
@@ -66,6 +73,7 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
   - 서버: `startup.checkpointer_ready`, `shutdown.checkpointer_closed`, `health.not_ok`, `vectorstore.cache_hit`, `vectorstore.build_start`, `vectorstore.build_done`
   - KOBIS: `kobis.request`, `kobis.success`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info), `kobis.too_recent`(호출 전 차단), `kobis.empty_result`, `kobis.no_api_key`, `kobis.timeout`, `kobis.http_error`, `kobis.network_error`, `kobis.parse_error`
   - 웹 검색: `web.request`(query_len), `web.success`, `web.empty_result`, `web.no_api_key`, `web.timeout`, `web.http_error`, `web.network_error`, `web.parse_error`
+  - IMDB SQL: `imdb.sql_request`(query_len — SQL 본문은 남기지 않음), `imdb.sql_done`(rows), `imdb.sql_rejected`(error=예외 타입)
   - CLI: `cli.start`, `cli.exit`, `cli.invoke_error`
 - 모든 로그는 `stderr`로 출력되어 uvicorn 표준 로그와 섞이지 않음
 

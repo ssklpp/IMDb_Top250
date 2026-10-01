@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 HISTORICAL = re.compile(r"였습니다|였다|당시|이전에는")
 
 # 로그 이벤트로 인정하는 접두어. 문서의 다른 백틱 표기(`kobis_format.py` 등)와 구분한다.
-EVENT_PREFIXES = ("chat", "cli", "health", "kobis", "shutdown", "startup", "vectorstore", "web")
+EVENT_PREFIXES = ("chat", "cli", "health", "imdb", "kobis", "shutdown", "startup", "vectorstore", "web")
 
 TEXT_SUFFIXES = (".py", ".md", ".ts", ".tsx", ".json", ".yml", ".yaml", ".toml", ".txt", ".in", ".css")
 

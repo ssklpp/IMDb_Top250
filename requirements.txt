@@ -55,7 +55,6 @@ propcache==0.4.1
 pydantic==2.12.3
 pydantic-core==2.41.4
 pydantic-settings==2.11.0
-pymupdf==1.27.2.2
 python-dotenv==1.1.1
 pyyaml==6.0.3
 regex==2025.10.23
