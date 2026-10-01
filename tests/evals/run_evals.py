@@ -130,6 +130,19 @@ async def run_one(item: dict, judge_llm: ChatOpenAI | None) -> EvalResult:
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
     try:
+        # 같은 대화의 앞 차례들을 먼저 실행한다. 서버처럼 차례마다 날짜 SystemMessage를 붙이고,
+        # 도구 호출은 아래 마지막 질문의 것만 센다. 항목마다 새 thread로 한 번만 묻던 방식으로는
+        # "이미 답한 질문을 다시 하면 도구 없이 답해 출처가 사라지는" 문제가 보이지 않았다.
+        for prior in item.get("history", []):
+            await agent.ainvoke(
+                {
+                    "messages": [
+                        SystemMessage(content=format_date_context(today_kst())),
+                        HumanMessage(content=prior),
+                    ]
+                },
+                config=config,
+            )
         async for event in agent.astream_events(
             # server.py와 같은 입력이어야 평가가 프로덕션 동작을 검증한다.
             {

@@ -44,6 +44,16 @@
     "rubric": "1990~1999년 개봉작 39편이라고 답해야 한다. 이 데이터에서만 나오는 개수라 도구로 세지 않으면 맞힐 수 없다."
   },
   {
+    "id": "multiturn-001",
+    "history": ["쇼생크 탈출의 감독은 누구야?"],
+    "question": "쇼생크 탈출 감독이 누구야?",
+    "expected_tools": ["imdb_search", "imdb_sql"],
+    "expected_keywords": ["다라본트"],
+    "expected_keywords_any": true,
+    "corpus_evidence": ["The Shawshank Redemption", "Frank Darabont"],
+    "rubric": "같은 대화에서 이미 답한 질문을 다시 받았어도 감독 프랭크 다라본트를 답해야 한다. 도구를 다시 불러 출처를 남겼는지는 별도로 검사한다."
+  },
+  {
     "id": "kobis-001",
     "question": "2023년에 개봉한 한국 영화 '서울의 봄'에 대해 알려줘",
     "expected_tools": ["kobis_search"],

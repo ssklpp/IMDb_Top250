@@ -54,6 +54,17 @@ python -m tests.evals.run_evals --ids imdb-001 kobis-001
 }
 ```
 
+### 같은 대화에서 이어 묻기 — `history`
+
+```json
+  "history": ["쇼생크 탈출의 감독은 누구야?"],
+  "question": "쇼생크 탈출 감독이 누구야?",
+```
+
+`history`의 질문들을 같은 대화(thread)에서 먼저 실행한 뒤 `question`을 묻는다. 도구 호출은 **마지막
+질문의 것만** 센다. 항목마다 새 대화로 한 번만 묻던 방식으로는 "이미 답한 질문을 다시 하면 도구 없이
+답해 출처가 사라지는" 문제가 보이지 않았다(`multiturn-001`).
+
 `expected_keywords_any`(any/all)와 `rubric` 작성을 잊지 말 것. 거절 규칙처럼 **경계**를 다루는
 항목은 양쪽 방향을 모두 세운다 — `refusal-001`(거절해야 함)과 `refusal-002`(거절하면 안 됨).
 
