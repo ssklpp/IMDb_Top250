@@ -103,7 +103,14 @@ llm = ChatOpenAI(model_name="gpt-5.4-mini", temperature=0)
 imdb_tool = create_retriever_tool(
     retriever,
     name="imdb_search",
-    description="IMDB Top 250 목록에서 영화 정보를 검색합니다. 영화 제목, 감독, 출연진, 평점 등을 찾을 때 사용하세요.",
+    description=(
+        "IMDB Top 250 목록에서 영화 정보를 검색합니다. 영화 제목, 감독, 출연진, 평점 등을 찾을 때 사용하세요. "
+        "자료가 영어라 검색어는 영어로 쓰세요(쇼생크 탈출 → The Shawshank Redemption). "
+        "제목을 모르는 줄거리 묘사도 영어 키워드로 바꿔 먼저 여기서 찾아보세요(요리하는 쥐 → rat who cooks)."
+    ),
+    # "영어로" 문장은 검색 적중률 측정의 결과다(tests/evals/README.md). 모델은 대개 제목을 스스로
+    # 영어로 바꾸지만, 제목을 모르는 한국어 줄거리 묘사는 그대로 넘겨 못 찾거나 웹 검색으로 우회했다.
+    # 고치면 python -m tests.evals.run_retrieval --actual 로 다시 잴 것.
     # content만 쓰면 검색된 Document의 메타데이터(순위·제목)가 버려진다.
     # 출처 표시에 필요하므로 artifact로 원본 Document를 함께 받는다.
     response_format="content_and_artifact",

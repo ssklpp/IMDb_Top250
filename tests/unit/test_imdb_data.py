@@ -151,6 +151,24 @@ class TestQueryMovies:
             query_movies("SELECT 1" + " " * SQL_MAX_CHARS)
 
 
+RETRIEVAL_SET = json.loads((GOLDEN_PATH.parent / "retrieval_set.json").read_text(encoding="utf-8"))
+
+
+class TestRetrievalSet:
+    def test_정답_제목이_실제_영화를_가리킨다(self):
+        """적중 판정은 제목 일치로 한다. 오타가 있으면 그 질문은 영원히 '못 찾음'으로 집계되어
+        검색 탓이 아닌 실패가 적중률을 깎는다. CSV의 원제(Gisaengchung 등)와 정확히 같아야 한다."""
+        titles = {meta["title"] for _, meta in DOCS}
+        wrong = [(it["id"], g) for it in RETRIEVAL_SET for g in it["gold"] if g not in titles]
+        assert wrong == []
+
+    def test_질문과_id가_겹치지_않고_유형이_정해진_값이다(self):
+        """같은 질문이 두 번 들어가면 그 유형의 비율이 부풀고, 모르는 유형은 결과표에서 빠진다."""
+        assert len({it["id"] for it in RETRIEVAL_SET}) == len(RETRIEVAL_SET)
+        assert len({it["query"] for it in RETRIEVAL_SET}) == len(RETRIEVAL_SET)
+        assert {it["category"] for it in RETRIEVAL_SET} <= {"en_title", "ko_title", "original_title", "person", "plot"}
+
+
 GOLDEN = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
 SEARCH_ITEMS = [it for it in GOLDEN if "imdb_search" in it.get("expected_tools", [])]
 EVIDENCE_ITEMS = [it for it in GOLDEN if "corpus_evidence" in it]
