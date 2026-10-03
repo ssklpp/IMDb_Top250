@@ -28,12 +28,53 @@ const MAX_STORED_MESSAGES = 50;
 // server.py의 MAX_QUESTION_CHARS와 맞춘다. 백엔드가 422로 거절하기 전에 입력 단계에서 막는다.
 const MAX_QUESTION_CHARS = 2000;
 
-const EXAMPLE_QUESTIONS = [
-  "IMDB Top 250 평점 1위 영화는?",
-  "어제 한국 박스오피스 1위는?",
-  "크리스토퍼 놀란 감독 영화 추천해줘",
-  "인터스텔라에 대해 설명해줘",
+type Tone = "imdb" | "kobis" | "web";
+
+// where: 이 질문의 답이 어디서 오는지. 입장권과 같은 색 표시로 미리 보여준다.
+const EXAMPLE_QUESTIONS: { q: string; tone: Tone; where: string }[] = [
+  { q: "IMDB Top 250 평점 1위 영화는?", tone: "imdb", where: "IMDB 순위표" },
+  { q: "어제 한국 박스오피스 1위는?", tone: "kobis", where: "영화진흥위원회" },
+  { q: "크리스토퍼 놀란 감독 영화 추천해줘", tone: "imdb", where: "IMDB Top 250" },
+  { q: "인터스텔라에 대해 설명해줘", tone: "imdb", where: "IMDB Top 250" },
 ];
+
+function sourceTone(tool: string): Tone {
+  if (tool === "imdb_search" || tool === "imdb_sql") return "imdb";
+  if (tool === "kobis_search") return "kobis";
+  return "web";
+}
+
+// runRequest가 만든 상태 문구에서 도구 색을 고른다
+function statusTone(status: string): Tone | "none" {
+  if (status.includes("IMDB")) return "imdb";
+  if (status.includes("한국")) return "kobis";
+  if (status.includes("웹")) return "web";
+  return "none";
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+// 입장권 한 장에 들어갈 내용. 라벨 형식은 sources.py가 정한다(IMDB는 "IMDB #<순위> <제목>").
+function stubParts(s: Source): { big: string; unit?: string; small?: boolean; title: string; sub: string } {
+  if (s.tool === "imdb_search") {
+    const m = s.label.match(/^IMDB #(\d+)\s+(.+)$/);
+    if (m) return { big: m[1], unit: "위", title: m[2], sub: "IMDB Top 250" };
+    return { big: "IMDB", small: true, title: s.label, sub: "IMDB Top 250" };
+  }
+  if (s.tool === "imdb_sql") {
+    return { big: "250", unit: "편", title: "IMDB Top 250 전체 목록", sub: "순위·평점 조회" };
+  }
+  if (s.tool === "kobis_search") {
+    return { big: "KOBIS", small: true, title: "영화진흥위원회", sub: "한국 개봉·흥행 기록" };
+  }
+  return { big: "웹", title: s.label, sub: s.url ? hostOf(s.url) : "웹 검색" };
+}
 
 const RETRYABLE_CODES = new Set([
   "TIMEOUT",
@@ -293,21 +334,16 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col h-screen h-[100dvh] bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
-      <header className="shrink-0 flex items-center px-4 pt-6 pb-4">
-        <div className="flex-1" />
-        <div className="flex flex-col items-center">
-          <h1 className="text-2xl sm:text-4xl font-bold tracking-tight mb-1">영화 챗봇</h1>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">
-            AI 영화 전문가에게 무엇이든 물어보세요
-          </p>
-        </div>
-        <div className="flex-1 flex justify-end items-center gap-1">
+    <div className="flex flex-col h-screen h-[100dvh] bg-page text-ink">
+      <header className="shrink-0 border-b border-line">
+        <div className="mx-auto w-full max-w-2xl flex items-center gap-1 px-4 py-2">
+          <h1 className="flex-1 font-display text-lg font-bold tracking-tight">영화 챗봇</h1>
           {/* 다크 모드 토글 */}
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-ink-soft hover:text-ink hover:bg-line/60 focus-visible:outline-2 focus-visible:outline-ink transition-colors"
             title="다크 모드 전환"
+            aria-label="다크 모드 전환"
           >
             {theme === "dark" ? (
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -324,142 +360,165 @@ export default function Home() {
           <button
             onClick={handleNewConversation}
             disabled={isLoading}
-            className="min-h-[44px] min-w-[44px] px-3 py-2 rounded-lg text-sm text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 transition-colors"
+            className="min-h-[44px] min-w-[44px] px-3 py-2 rounded-lg text-sm text-ink-soft hover:text-ink hover:bg-line/60 focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-40 transition-colors"
           >
             새 대화
           </button>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto px-4 py-4">
+      <main className="flex-1 overflow-y-auto px-4 py-6">
         {messages.length === 0 ? (
-          <div className="mx-auto w-full max-w-2xl flex flex-col items-center justify-center h-full gap-4 pb-8">
-            <p className="text-sm text-gray-400 dark:text-gray-500">예시 질문으로 시작해보세요</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
-              {EXAMPLE_QUESTIONS.map((q) => (
-                <button
-                  key={q}
-                  onClick={() => submitQuestion(q)}
-                  disabled={isLoading}
-                  className="text-left px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600 disabled:opacity-40 transition-colors"
-                >
-                  {q}
-                </button>
+          <div className="mx-auto w-full max-w-2xl flex flex-col justify-center min-h-full pb-8">
+            <h2 className="font-display text-[2.25rem] sm:text-5xl font-bold leading-[1.15] tracking-tight">
+              어떤 영화가<br />궁금하세요?
+            </h2>
+            <p className="mt-4 max-w-[34em] text-ink-soft leading-relaxed">
+              IMDB Top 250과 한국 박스오피스, 웹을 찾아 답하고, 어디서 찾았는지 답 아래에 함께 붙여 드려요.
+            </p>
+            <ul className="mt-8 border-t border-line">
+              {EXAMPLE_QUESTIONS.map(({ q, tone, where }) => (
+                <li key={q} className="border-b border-line">
+                  <button
+                    onClick={() => submitQuestion(q)}
+                    disabled={isLoading}
+                    className="w-full min-h-[52px] flex items-center gap-3 py-3 text-left hover:bg-line/40 focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-40 transition-colors"
+                  >
+                    <span className="flex-1">{q}</span>
+                    <span className="flex items-center gap-1.5 text-xs text-ink-soft whitespace-nowrap">
+                      <span className="swatch" data-tone={tone} data-static />
+                      {where}
+                    </span>
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-2xl flex flex-col gap-6">
+          <div className="mx-auto w-full max-w-2xl flex flex-col gap-10">
             {messages.map((msg) => (
-              <div key={msg.id} className="flex flex-col gap-2">
+              <div key={msg.id} className="flex flex-col gap-4">
                 {/* 사용자 질문 */}
-                <div className="self-end max-w-[85%] sm:max-w-[80%] px-4 py-3 rounded-2xl bg-blue-600 text-white text-sm">
+                <div className="self-end max-w-[85%] sm:max-w-[80%] px-4 py-2.5 rounded-2xl rounded-br-md bg-ink text-page whitespace-pre-wrap break-words">
                   {msg.question}
                 </div>
 
-                {/* AI 응답 */}
-                <div className="self-start max-w-[85%] sm:max-w-[80%] relative group">
-                  <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed min-h-[44px] ${
-                    msg.isError
-                      ? "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300"
-                      : "bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white"
-                  }`}>
-                    {/* 도구 상태 표시 */}
-                    {msg.toolStatus && (
-                      <div className="flex items-center gap-1.5 text-xs text-blue-500 mb-2">
-                        <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                        {msg.toolStatus}
-                      </div>
-                    )}
+                {/* AI 응답 — 말풍선 없이 읽는 글로 둔다 */}
+                <div className="group flex flex-col gap-3 min-h-[44px]">
+                  {/* 도구 상태 표시 */}
+                  {msg.toolStatus && (
+                    <div className="flex items-center gap-2 text-sm text-ink-soft">
+                      <span className="swatch" data-tone={statusTone(msg.toolStatus)} />
+                      {msg.toolStatus}
+                    </div>
+                  )}
 
-                    {msg.answer ? (
-                      msg.isError ? (
-                        <div className="flex flex-col gap-2">
-                          <span>{msg.answer}</span>
-                          {msg.retryable && (
-                            <button
-                              onClick={() => handleRetry(msg)}
-                              disabled={isLoading}
-                              className="self-start text-xs px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-900/50 hover:bg-red-200 dark:hover:bg-red-900/70 text-red-700 dark:text-red-200 disabled:opacity-40 transition-colors"
-                            >
-                              다시 시도
-                            </button>
-                          )}
-                        </div>
-                      ) : (
+                  {msg.answer ? (
+                    msg.isError ? (
+                      <div className="flex flex-col gap-2 border-l-[3px] border-stamp pl-3 py-1 text-stamp">
+                        <span>{msg.answer}</span>
+                        {msg.retryable && (
+                          <button
+                            onClick={() => handleRetry(msg)}
+                            disabled={isLoading}
+                            className="self-start min-h-[36px] text-sm px-3 rounded-lg border border-stamp/60 hover:bg-stamp/10 focus-visible:outline-2 focus-visible:outline-stamp disabled:opacity-40 transition-colors"
+                          >
+                            다시 시도
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="leading-[1.75] break-words">
                         <ReactMarkdown
                           components={{
-                            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                            ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
-                            ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
-                            li: ({ children }) => <li>{children}</li>,
+                            p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                            ul: ({ children }) => <ul className="list-disc pl-5 mb-3 space-y-1">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal pl-5 mb-3 space-y-1">{children}</ol>,
+                            li: ({ children }) => <li className="pl-0.5">{children}</li>,
                             strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                            h1: ({ children }) => <h1 className="text-base font-bold mb-1">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-sm font-bold mb-1">{children}</h2>,
-                            h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
-                            code: ({ children }) => <code className="bg-gray-200 dark:bg-gray-700 rounded px-1 font-mono text-xs">{children}</code>,
-                            blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 text-gray-600 dark:text-gray-300 italic">{children}</blockquote>,
-                            hr: () => <hr className="my-2 border-gray-300 dark:border-gray-600" />,
+                            h1: ({ children }) => <h1 className="font-display text-xl font-bold mt-4 mb-2 first:mt-0">{children}</h1>,
+                            h2: ({ children }) => <h2 className="font-display text-lg font-bold mt-4 mb-2 first:mt-0">{children}</h2>,
+                            h3: ({ children }) => <h3 className="font-semibold mt-3 mb-1 first:mt-0">{children}</h3>,
+                            code: ({ children }) => <code className="bg-line rounded px-1 font-mono text-[0.875em]">{children}</code>,
+                            blockquote: ({ children }) => <blockquote className="border-l-2 border-line pl-3 text-ink-soft">{children}</blockquote>,
+                            hr: () => <hr className="my-4 border-line" />,
                           }}
                         >
                           {msg.answer}
                         </ReactMarkdown>
-                      )
-                    ) : (
-                      !msg.toolStatus && (
-                        <span className="flex gap-1 items-center">
-                          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
-                          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
-                        </span>
-                      )
-                    )}
+                      </div>
+                    )
+                  ) : (
+                    !msg.toolStatus && (
+                      <span className="flex gap-1 items-center h-6" aria-label="답변 준비 중">
+                        <span className="w-1.5 h-1.5 bg-ink-soft rounded-full animate-bounce [animation-delay:0ms]" />
+                        <span className="w-1.5 h-1.5 bg-ink-soft rounded-full animate-bounce [animation-delay:150ms]" />
+                        <span className="w-1.5 h-1.5 bg-ink-soft rounded-full animate-bounce [animation-delay:300ms]" />
+                      </span>
+                    )
+                  )}
 
-                    {/* 출처 — 답변이 어느 도구/문서에서 나왔는지 밝힌다 */}
-                    {!msg.isError && msg.answer && msg.sources && msg.sources.length > 0 && (
-                      <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
-                        <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">출처</div>
-                        <ul className="flex flex-wrap gap-1.5">
-                          {msg.sources.map((s, i) => (
-                            <li key={`${s.url ?? s.label}-${i}`}>
+                  {/* 출처 — 답변이 어느 도구/문서에서 나왔는지 입장권으로 붙인다 */}
+                  {!msg.isError && msg.answer && msg.sources && msg.sources.length > 0 && (
+                    <div className="mt-1">
+                      <div className="text-xs text-ink-soft mb-2">출처</div>
+                      <ul className="flex flex-wrap gap-2">
+                        {msg.sources.map((s, i) => {
+                          const p = stubParts(s);
+                          const inner = (
+                            <>
+                              <span className="stub-head">
+                                <span className="flex items-baseline gap-px">
+                                  <span className={p.small ? "text-[0.7rem]" : "text-xl"}>{p.big}</span>
+                                  {p.unit && <span className="text-[0.7rem]">{p.unit}</span>}
+                                </span>
+                              </span>
+                              <span className="stub-body">
+                                <span className="truncate text-[0.8rem] font-semibold leading-snug">{p.title}</span>
+                                <span className="truncate text-[0.7rem] opacity-70 leading-snug">{p.sub}</span>
+                              </span>
+                            </>
+                          );
+                          const style = { animationDelay: `${i * 70}ms` };
+                          return (
+                            <li key={`${s.url ?? s.label}-${i}`} className="min-w-0">
                               {s.url ? (
                                 <a
                                   href={s.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="inline-block max-w-[220px] truncate text-[11px] px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                                  className="stub"
+                                  data-tone={sourceTone(s.tool)}
+                                  style={style}
                                   title={s.label}
                                 >
-                                  {s.label}
+                                  {inner}
                                 </a>
                               ) : (
-                                <span
-                                  className="inline-block max-w-[220px] truncate text-[11px] px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
-                                  title={s.label}
-                                >
-                                  {s.label}
+                                <span className="stub" data-tone={sourceTone(s.tool)} style={style} title={s.label}>
+                                  {inner}
                                 </span>
                               )}
                             </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
 
                   {/* 복사 버튼 (응답 완료 후, 에러가 아닐 때) */}
                   {msg.answer && !msg.isError && (
                     <button
                       onClick={() => handleCopy(msg.id, msg.answer)}
-                      className="absolute -bottom-6 right-0 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2 py-1 rounded"
+                      className="self-start -ml-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex items-center gap-1 text-xs text-ink-soft hover:text-ink px-2 py-1 rounded"
                       title="복사"
                     >
                       {copiedId === msg.id ? (
                         <>
-                          <svg className="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                           </svg>
-                          <span className="text-green-500">복사됨</span>
+                          복사됨
                         </>
                       ) : (
                         <>
@@ -480,29 +539,30 @@ export default function Home() {
         )}
       </main>
 
-      <footer className="shrink-0 px-4 py-3 sm:py-4 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-700">
+      <footer className="shrink-0 px-4 py-3 sm:py-4 border-t border-line">
         <form onSubmit={handleSubmit} className="mx-auto w-full max-w-2xl flex gap-2">
           <input
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             maxLength={MAX_QUESTION_CHARS}
-            placeholder="영화에 대해 질문해보세요..."
-            className="flex-1 px-4 py-2 sm:py-3 text-base sm:text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+            placeholder="영화에 대해 물어보세요"
+            aria-label="질문"
+            className="flex-1 min-w-0 px-4 py-2.5 sm:py-3 text-base sm:text-sm rounded-xl border border-line bg-surface text-ink placeholder:text-ink-soft/70 focus:outline-none focus:border-ink transition-colors"
           />
           <button
             type="submit"
             disabled={!question.trim() || isLoading}
-            className="px-5 py-2 sm:py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white font-medium transition-colors disabled:cursor-not-allowed min-w-[72px]"
+            className="px-5 py-2 sm:py-3 rounded-xl bg-ink text-page font-medium hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:opacity-30 disabled:cursor-not-allowed transition-opacity min-w-[72px]"
           >
             {isLoading ? (
-              <span className="flex items-center justify-center">
+              <span className="flex items-center justify-center" aria-label="답변 중">
                 <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
               </span>
-            ) : "전송"}
+            ) : "보내기"}
           </button>
         </form>
       </footer>

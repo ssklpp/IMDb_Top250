@@ -249,12 +249,13 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | 이걸 바꾸면 | 이것도 함께 | 안 고치면 | 상세 |
 |---|---|---|---|
 | `server.py`의 센티넬(`\x1f…`) 추가 | `page.tsx`의 정규식 alternation | 신호 문자가 답변에 그대로 출력 | `rules/server.md` |
-| 새 도구 추가 | `page.tsx`의 도구 상태 라벨, URL 없는 도구면 `sources.FIXED_SOURCES` | 상태가 영어 함수명으로 표시, 출처 칩 없음 | `rules/server.md` |
+| 새 도구 추가 | `page.tsx`의 도구 상태 라벨과 `sourceTone()`·`stubParts()`, URL 없는 도구면 `sources.FIXED_SOURCES` | 상태가 영어 함수명으로 표시, 출처 칩 없음 또는 웹 색 입장권 | `rules/server.md` |
 | `MAX_QUESTION_CHARS`(2000) | `server.py`와 `page.tsx` 양쪽 | 입력창과 서버 제한이 어긋남 | `rules/server.md` |
 | `sources.format_web_results()` | `sources._web_sources()` | 출처 칩만 사라짐 | `rules/server.md` |
 | 새 `tool_error` 코드 | `SYSTEM_PROMPT`의 `## 도구 에러 처리` | LLM이 대처 방법을 모름 | `rules/tools.md` |
 | `imdb_tool`의 `response_format` | 되돌리지 말 것(`content_and_artifact`) | IMDB 출처 칩이 사라짐 | `rules/server.md` |
 | `imdb_data.movie_docs()`의 메타데이터 키 | `sources._imdb_sources()` | IMDB 출처 칩만 사라짐 | `rules/server.md` |
+| `sources._imdb_sources()`의 라벨 형식(`IMDB #<순위> <제목>`) | `page.tsx`의 `stubParts()` 정규식 | 입장권에서 순위 숫자만 사라짐 | `web/AGENTS.md` |
 | `requirements.in` | `scripts/gen_lock.py` 재생성 + `ci.yml`의 import 목록 | CI 실패 또는 배포 불일치 | `rules/ci-deps.md` |
 | `SYSTEM_PROMPT`의 답변 범위 | 평가 `refusal-001`과 `refusal-002`를 **둘 다** 실행 | 과잉 거절을 놓침 | 이 문서 |
 | 에이전트에 넘기는 메시지 구성 (새 진입점 포함) | 질문 앞에 `SystemMessage(format_date_context(today_kst()))` | 상대 기간 질문이 엉뚱한 연도로 답함 | 이 문서 |
