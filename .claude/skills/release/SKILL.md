@@ -90,7 +90,7 @@ git push origin main
 .venv/Scripts/python .claude/skills/release/check_deploy.py
 ```
 
-CI 3개 잡 완료 → Vercel·Railway 배포 기록 → Railway 배포 완료 → `/health`를 순서대로 확인한다.
+CI 4개 잡 완료 → Vercel·Railway 배포 기록 → Railway 배포 완료 → `/health`를 순서대로 확인한다.
 보통 2~3분 걸린다.
 
 | 종료 코드 | 의미 | 할 일 |

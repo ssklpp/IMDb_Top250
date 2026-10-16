@@ -9,6 +9,16 @@ FastAPI 백엔드와 Next.js 16 프론트엔드로 웹 서비스를 제공합니
 
 **품질 지표** — 단위 테스트 119개 통과 (0.1초) · 에이전트 회귀 평가 18/18 통과 · 의존성 77개 전체 고정
 
+## 빠른 시작
+
+```bash
+cp .env.example .env            # OPENAI_API_KEY, KOBIS_API_KEY, TAVILY_API_KEY 입력
+docker compose up -d --build --wait
+# → http://localhost:3000
+```
+
+Docker 없이 실행하려면 아래 [설치 방법](#설치-방법)과 [실행 방법](#실행-방법)을 보세요.
+
 ---
 
 ## 해결한 문제들
@@ -211,6 +221,13 @@ python imdb_rag.py
 - 같은 세션에서 이전 대화 맥락이 유지됩니다
 - `q` 입력 시 종료
 
+### Docker (웹 + API 한 번에)
+```bash
+docker compose up -d --build --wait     # 처음엔 이미지 빌드와 영화 250편 임베딩 (몇 분)
+docker compose down                     # 인덱스·대화 기록은 볼륨에 남는다 (지우려면 -v)
+```
+API 포트(8000)는 밖으로 열지 않습니다. 브라우저는 `web`(3000)만 보고, `web`이 내부 네트워크로 API를 호출합니다.
+
 ### 웹 모드 (터미널 2개)
 ```bash
 # 터미널 1: FastAPI 서버 (포트 8000)
@@ -249,7 +266,7 @@ judge 모드에서는 rubric 기준 1~5점 채점까지 합니다. 종료 코드
 
 | 워크플로 | 트리거 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | 모든 push·PR | 구문 검사 + 단위 테스트 119개 + 문서-코드 대조 + **프로덕션 의존성 설치 검증** + 프론트 lint·build | **0** |
+| `ci.yml` | 모든 push·PR | 구문 검사 + 단위 테스트 119개 + 문서-코드 대조 + **프로덕션 의존성 설치 검증** + Docker 이미지 빌드 + 프론트 lint·build | **0** |
 | `evals.yml` | 수동 실행 | 에이전트 회귀 평가 18개 | 발생 |
 
 의존성 검증 잡은 Railway와 같은 조건(linux + Python 3.13)에서 `requirements.txt`를 실제로

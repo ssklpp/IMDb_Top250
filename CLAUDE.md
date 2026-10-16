@@ -15,7 +15,7 @@ IMDB Top 250 영화 목록(`imdb_top250.csv`)을 기반으로 한 AI 영화 전�
 |---|---|
 | IMDB 검색과 SQL을 나눈 이유·SQL 실행 제한, KOBIS 6개 모드, 웹 검색 도구, 도구 인자 검증 | `rules/tools.md` |
 | 답변 출처 추출, 입력 검증, 헬스체크, 응답 캐시, 레이트리밋, 로깅 | `rules/server.md` |
-| CI 잡을 그렇게 나눈 이유, 패키지 추가 절차, 배포 주의사항 | `rules/ci-deps.md` |
+| CI 잡을 그렇게 나눈 이유, 패키지 추가 절차, 배포 주의사항, Docker 구성 | `rules/ci-deps.md` |
 | 프론트엔드(`web/`) 레이아웃·모바일·프록시 에러 | `web/AGENTS.md` |
 | 평가 러너와 골든셋 항목 추가 | `tests/evals/README.md` |
 | 기술 스택 목록, 환경변수 전체, 사람이 읽는 프로젝트 소개 | `README.md` |
@@ -34,6 +34,14 @@ IMDB Top 250 영화 목록(`imdb_top250.csv`)을 기반으로 한 AI 영화 전�
 계속 제외된다. 스킬이 git에 있어야 다른 PC에서도 같은 절차를 쓴다.
 
 ## 실행 명령어
+
+### Docker로 한 번에 (웹 + API)
+```bash
+docker compose up -d --build --wait                  # http://localhost:3000. 처음엔 이미지 빌드 + 임베딩
+docker compose logs -f api                           # 백엔드 로그
+docker compose down                                  # 볼륨(인덱스·대화 DB)은 남는다. 지우려면 -v
+```
+배포(Vercel·Railway)는 Docker를 쓰지 않는다. 컨테이너 구성의 이유는 `rules/ci-deps.md`.
 
 ### 백엔드 (FastAPI)
 가상환경을 먼저 활성화한다. Python은 `.python-version`(3.13)으로 고정돼 있다.
@@ -207,6 +215,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 |---|---|---|---|
 | `ci.yml` | `python` | 구문 검사 + 단위 테스트 119개 + 문서-코드 대조 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** | **0** |
+| `ci.yml` | `docker` | `docker compose build` — 로컬 원클릭 실행이 깨지지 않았는지 | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
 | `evals.yml` | — | 에이전트 회귀 평가 18개 (`workflow_dispatch` 수동) | 발생 |
 
