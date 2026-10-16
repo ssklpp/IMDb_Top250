@@ -34,7 +34,7 @@ Movie Scene Finder는 검색 품질·평가를 맡고, 이 저장소는 에이�
 | 서비스 | 이미지 / 빌드 | 역할 | 단계 |
 | --- | --- | --- | --- |
 | `postgres` | `postgres:16` | 체크포인트, 브리핑·승인 기록 | 3 (1단계에서는 쓰는 곳이 없어 미룸) |
-| `api` | `Dockerfile` (python:3.13-slim) | `server.py`, 에이전트 실행 | 1 |
+| `api` | `docker/api.Dockerfile` (python:3.13-slim) | `server.py`, 에이전트 실행 | 1 |
 | `web` | `web/Dockerfile` (node:22, Next.js standalone) | 채팅 UI, `/api/chat` 프록시 | 1 |
 | `mcp` | `mcp/Dockerfile` | 영화 데이터 도구 서버 | 2 |
 | `n8n` | `n8nio/n8n` | 트리거·실패 알림, `profiles: [automation]` | 4 |

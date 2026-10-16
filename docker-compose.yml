@@ -10,7 +10,10 @@ name: movie-chatbot
 
 services:
   api:
-    build: .
+    build:
+      context: .
+      # 루트가 아니라 docker/에 둔다. 루트에 Dockerfile이 있으면 Railway 배포가 실패한다.
+      dockerfile: docker/api.Dockerfile
     env_file: .env
     volumes:
       # FAISS 인덱스와 대화 DB. down 후 다시 올려도 임베딩을 다시 하지 않고 대화도 이어진다.
