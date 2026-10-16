@@ -281,7 +281,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | 새 도구 추가 | `agent.local_tools()`와 `movie_mcp/server.py` 양쪽 등록, `server.EXPECTED_TOOLS`, `page.tsx`의 도구 상태 라벨과 `sourceTone()`·`stubParts()`, URL 없는 도구면 `sources.FIXED_SOURCES` | 한쪽 경로에만 도구가 생김, MCP 모드 `/health` 503, 상태가 영어 함수명으로 표시, 출처 칩 없음 | `rules/tools.md` |
 | 도구 이름·설명·인자 | `movie_tools/`의 상수만 고친다(로컬·MCP가 같이 씀). `tests/mcp/`가 두 경로 정의를 비교 | 로컬과 MCP의 모델 입력이 달라져 평가가 갈림 | `rules/tools.md` |
 | `kobis_search`가 오늘 날짜를 읽는 곳 | `scripts/trace.py --date`가 바꾸는 모듈(`movie_tools.kobis.today_kst`) | 재현 날짜가 "집계 전 차단"에 안 먹어 에러 없이 실제 날짜로 동작 | `rules/tools.md` |
-| 레이트리밋 키 헤더(`X-Client-IP`·`X-Proxy-Secret`) | `route.ts`의 `clientIpHeaders()`와 `ratelimit.py`, 비밀값은 Vercel·Railway의 `PROXY_SECRET`에 **같은 값** | 에러 없이 모든 요청이 키를 못 정해 제한이 안 걸리거나 엉뚱하게 묶임 | `rules/server.md` |
+| 레이트리밋 키 헤더(`X-Client-IP`·`X-Proxy-Secret`) | `route.ts`의 `clientIpHeaders()`와 `ratelimit.py`, 비밀값은 Vercel·Railway의 `PROXY_SECRET`에 **같은 값** | 값이 어긋나면 웹 화면의 모든 질문이 403, 헤더 이름이 어긋나면 에러 없이 Vercel 주소로 묶임 | `rules/server.md` |
 | `MAX_QUESTION_CHARS`(2000) | `server.py`와 `page.tsx` 양쪽 | 입력창과 서버 제한이 어긋남 | `rules/server.md` |
 | `sources.format_web_results()` | `sources._web_sources()` | 출처 칩만 사라짐 | `rules/server.md` |
 | 새 `tool_error` 코드 | `SYSTEM_PROMPT`의 `## 도구 에러 처리` | LLM이 대처 방법을 모름 | `rules/tools.md` |

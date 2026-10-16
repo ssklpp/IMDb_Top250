@@ -201,7 +201,7 @@ Vercel(프론트엔드) + Railway(백엔드) 조합으로 배포합니다.
 ### Railway (백엔드)
 1. GitHub 레포 연결 → 환경변수 설정 (`.env.example` 참고)
 2. `CORS_ORIGINS`에 Vercel 도메인 설정
-3. `PROXY_SECRET`에 임의의 긴 문자열 설정 — Vercel에도 **같은 값**. 방문자별 레이트리밋에 필요합니다
+3. `PROXY_SECRET`에 임의의 긴 문자열 설정 — Vercel에도 **같은 값**(Production·Preview). 방문자별 레이트리밋에 필요하고, 설정하면 Railway 주소로 직접 오는 질문은 403으로 거절합니다
 4. Volumes에서 `/app/vectorstore` 마운트 (영구 저장)
 
 > **Python 버전**: `.python-version`(3.13)을 nixpacks가 자동으로 인식합니다. 이 파일이 없으면 nixpacks 기본값인 3.11로 빌드되어 로컬과 달라지므로 삭제하지 마세요.
