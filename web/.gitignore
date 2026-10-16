@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 템플릿은 추적한다. README가 이 파일을 가리키는데 예전엔 이 규칙에 걸려 저장소에 없었다(B-014).
+!.env.example
 
 # vercel
 .vercel
