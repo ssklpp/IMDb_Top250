@@ -1,4 +1,4 @@
-# 도구 규칙 (`agent.py`의 4개 도구)
+# 도구 규칙 (`movie_tools/`의 4개 도구)
 
 > `imdb_search` / `imdb_sql` / `kobis_search` / `web_search`를 고칠 때 먼저 읽을 것.
 > 에러 계약(`[TOOL_ERROR code=…]`)과 코드 목록은 `CLAUDE.md`에 있다.
@@ -79,7 +79,7 @@ LLM의 날짜 계산은 실행마다 흔들리므로(같은 질문에 `20260911`
 **출력 상한** — KOBIS 상세정보는 `actors`를 90건, `staffs`를 625건까지 반환합니다. `staffs`는 전량 제외(VFX 아티스트·투자 등 크루 노이즈), `actors`는 `DETAIL_MAX_ACTORS=8`건까지만 `이름(배역)` 형태로 렌더링하고 나머지는 "외 N명"으로 요약합니다. `companys`는 `companyPartNm`으로 제작사·배급사만 필터합니다.
 
 ## 웹 검색 도구 (`web_search`)
-`langchain_tavily.TavilySearch`를 쓰지 않고 `agent.py`의 `_tavily_search()`가 Tavily REST API를
+`langchain_tavily.TavilySearch`를 쓰지 않고 `movie_tools/web.py`의 `_tavily_search()`가 Tavily REST API를
 `requests`로 직접 호출한다. **`TavilySearch`로 되돌리지 말 것.** 바꾼 이유가 전부 실측으로 확인된 문제다.
 
 | 문제 (TavilySearch) | 실측 | 지금 |
@@ -97,7 +97,7 @@ LLM의 날짜 계산은 실행마다 흔들리므로(같은 질문에 `20260911`
 
 ## 도구 입력 검증
 > 에러 포맷(`[TOOL_ERROR code=…]`)과 코드 목록은 `CLAUDE.md`에 있다.
-`kobis_search`는 Pydantic `KobisInput` 스키마(`agent.py`)로 인자를 검증합니다.
+`kobis_search`는 Pydantic `KobisInput` 스키마(`movie_tools/kobis.py`)로 인자를 검증합니다. MCP 경로에서는 `movie_mcp/server.py`가 같은 모델을 거쳐 field_validator까지 돌린다.
 - `search_type`: `Literal["movie", "detail", "daily", "weekly", "weekend", "weekday"]` — 잘못된 값 시 LangChain이 `ValidationError`를 ToolMessage로 변환해 LLM에 반환 → LLM이 자가 정정 후 재호출
 - `open_start_dt` / `open_end_dt`: `field_validator`로 4자리 숫자 검증
 - 박스오피스 모드의 `query`: `is_valid_date()`(`kobis_format.py`)로 **8자리 숫자이면서 실제 달력에 존재하는 날짜**인지 검증. 두 조건을 모두 봐야 합니다 — KOBIS가 `99999999`에도 에러 대신 엉뚱한 데이터를 반환하고, 반대로 `strptime`만 쓰면 제로 패딩에 관대해서 7자리 `'2026091'`을 2026-09-01로 통과시킵니다(실제로 있었던 버그). `detail`은 제목을 받으므로 이 검증 대상이 아닙니다.
@@ -111,3 +111,41 @@ LLM의 날짜 계산은 실행마다 흔들리므로(같은 질문에 `20260911`
 - `_tavily_search()`는 **최대 2회, 연결 문제(`Timeout`/`ConnectionError`)만** 재시도. Tavily는 호출마다 크레딧을 쓰고 HTTP 오류는 다시 보내도 같기 때문
 - 도구별 타임아웃: `KOBIS_TIMEOUT=10s`, `WEB_TIMEOUT=15s`. 전체 요청 타임아웃: `REQUEST_TIMEOUT_S=120` (`server.py`)
 - 폴백은 명시적 코드가 아닌 LLM 판단으로 처리됨 — 도구 에러 메시지에 "web_search로 대신 시도해보세요" 같은 힌트를 포함
+
+## MCP 서버 (`movie_mcp/server.py`)
+
+도구 4개를 FastMCP 서버로 내보낸다. 구현은 `movie_tools/`이고 서버는 등록만 한다.
+
+| 항목 | 내용 |
+|---|---|
+| 실행 | `python -m movie_mcp.server` (stdio, Claude Desktop용) / `--transport streamable-http --port 8001` (compose) |
+| 도구 | `imdb_search`, `imdb_sql`, `kobis_search`, `web_search` — 이름·설명·인자 스키마가 로컬 도구와 **완전히 같다** |
+| 리소스 | `imdb://schema` (`imdb_data.SQL_SCHEMA`) |
+| 헬스체크 | `GET /health` — 벡터스토어와 OpenAI 키가 준비돼야 200 (HTTP 모드에서만) |
+| 키 | OPENAI(검색어 임베딩), KOBIS, TAVILY. 에이전트 쪽(compose의 api)은 OpenAI 키만 갖는다 |
+
+**왜 두 경로 모두 18/18이어야 하나** — MCP로 바꿔도 모델이 받는 입력이 같아야 같은 도구를 고른다.
+그래서 이름·설명·인자 설명을 `movie_tools`의 상수 한 곳에 두고, `tests/mcp/`가 로컬과 MCP의 도구 정의를
+JSON 그대로 비교한다. 처음 옮길 때 `kobis_search` 설명이 docstring 들여쓰기 4칸만큼 달랐다 — 눈으로는
+안 보이는 차이다. 바꾼 뒤 평가는 `run_evals`와 `run_evals --mcp-url …`로 양쪽 다 돌린다.
+
+**MCP를 거치면 결과 형태가 달라진다** (`langchain-mcp-adapters` 0.3.0)
+- `ToolMessage.content`가 문자열이 아니라 블록 목록(`[{"type": "text", "text": …}]`)이다. `sources.py`는
+  읽기 전에 `_as_text()`로 문자열로 만든다. 안 그러면 웹 출처가 사라지고 에러 응답에도 고정 출처가 붙는다.
+- `imdb_search`의 artifact는 `list[Document]`가 아니라 `{"structured_content": {"movies": [{rank, title, year}]}}`다.
+  서버가 `CallToolResult(content=본문, structuredContent=영화 목록)`으로 보낸다 — 모델은 본문만 본다.
+- 인자 검증 실패는 `isError` 결과 → `status="error"` ToolMessage로 모델에 간다(로컬의 ValidationError와 같은 동작).
+
+**구현 주의**
+- **동기 도구는 스레드로 넘긴다**(`anyio.to_thread.run_sync`). FastMCP는 동기 함수를 이벤트 루프에서 그대로
+  돌려서, KOBIS 응답을 기다리는 동안 다른 요청이 멈춘다.
+- **Host 헤더 검사를 끄지 않는다.** FastMCP는 host가 127.0.0.1일 때만 DNS 리바인딩 방어를 켠다. 0.0.0.0으로
+  띄우면 꺼지므로 직접 켜고, compose 서비스 이름만 `MCP_ALLOWED_HOSTS=mcp:*`로 더한다. 포트는 밖으로 열지 않는다.
+- **`.env`는 저장소 경로로 읽는다.** Claude Desktop은 서버를 어느 폴더에서 띄울지 모르고, 부모 환경변수도 대부분
+  넘기지 않는다(MCP Inspector도 마찬가지였다). 벡터스토어 경로도 같은 이유로 저장소 기준 절대 경로다.
+- **로그는 stderr.** stdio 모드에서 stdout은 프로토콜 통로다.
+
+**지연** (같은 PC, 중앙값) — `imdb_sql` 3ms → 281ms, `imdb_search` 156ms → 436ms. 어댑터가 도구 호출마다
+세션을 새로 열기 때문이다(초기화 왕복 포함). 세션을 붙잡아 두면 6ms·164ms로 거의 같아지지만, 그러면 MCP
+서버가 재시작될 때 다시 붙는 로직이 필요하다. 배포(Railway)는 로컬 도구라 영향이 없어 지금은 호출마다 세션을
+연다. `docs/bug-log.md` B-013.

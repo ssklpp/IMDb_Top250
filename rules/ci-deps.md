@@ -24,24 +24,31 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 
 - `ubuntu-latest` + `.python-version`(3.13) — **nixpacks가 쓰는 것과 같은 조건**
 - `pip install -r requirements.txt` — Railway가 실행하는 것과 같은 명령
-- 서드파티 18개를 실제로 import — 설치 성공과 사용 가능은 다르다.
+- 서드파티 20개를 실제로 import — 설치 성공과 사용 가능은 다르다.
+- `tests/mcp/` — MCP 서버를 메모리 안에서 띄워 도구 정의·입력 검증을 본다. mcp·langchain이 필요해서
+  pytest만 까는 `python` 잡이 아니라 여기서 돈다. 외부 API는 부르지 않는다.
   특히 `AsyncSqliteSaver`는 `langgraph-checkpoint-sqlite`라는 **별도 패키지**라 빠지기 쉽다.
 - `requirements.in`과 락의 드리프트 검사 — `.in`에 추가하고 `gen_lock.py`를 잊는 실수를 막는다
 
 ## `docker` 잡과 컨테이너 구성
-`docker-compose.yml`은 **로컬 원클릭 실행용**이다(`api` + `web`). 배포는 여전히 nixpacks(Railway)와
+`docker-compose.yml`은 **로컬 원클릭 실행용**이다(`web` → `api` → `mcp`). 배포는 여전히 nixpacks(Railway)와
 Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — 그래서 CI에서 이미지 빌드만 확인한다.
 실행은 하지 않는다(OpenAI 키와 임베딩이 필요해 비용이 든다).
 
 - **브라우저는 `web`만 본다.** `route.ts`가 서버 쪽에서 `BACKEND_URL=http://api:8000`으로 프록시하므로
   api 포트를 열지 않고 CORS 설정도 필요 없다.
-- **`web`은 `api`의 `/health`가 200이 된 뒤에 뜬다**(`depends_on: service_healthy`). 처음 뜰 때는 250편
-  임베딩이 끝나야 200이라 `start_period`를 길게 뒀다.
-- **`vectorstore` named volume**에 인덱스와 `checkpoints.sqlite`가 함께 있다. Railway 볼륨과 같은 구조라
-  `down` 후 다시 올려도 임베딩을 반복하지 않고 대화도 이어진다.
+- **기동 순서는 헬스체크로 묶는다**: `mcp`(벡터스토어 준비) → `api`(MCP에서 도구 4개 받음) → `web`.
+  처음 뜰 때는 `mcp`가 250편을 임베딩해야 200이라 `mcp`의 `start_period`를 길게 뒀다.
+- **`mcp`와 `api`는 같은 이미지**를 명령만 바꿔 쓴다(`docker/api.Dockerfile`). 의존성이 같다.
+- **키는 서비스마다 필요한 것만** `.env`에서 골라 넣는다(`env_file` 대신 `environment`). KOBIS·Tavily 키는
+  `mcp`만, `api`는 OpenAI 키(LLM)만 갖는다. `mcp`도 검색어 임베딩에 OpenAI 키가 필요하다.
+- **볼륨 둘**: `movie_index`(mcp의 FAISS 인덱스), `chat_db`(api의 `checkpoints.sqlite`). `down` 후 다시 올려도
+  임베딩을 반복하지 않고 대화도 이어진다.
+- **Railway는 MCP를 쓰지 않는다.** `MCP_URL`이 없으면 `server.py`가 로컬 도구를 쓴다. 배포 구성은 그대로다.
 - **api 이미지는 2단계 빌드**: `requirements.txt`(락)만 먼저 복사해 설치 층을 캐시하고, 실행 이미지에는
-  venv와 `*.py`·CSV만 둔다. `docker/api.Dockerfile.dockerignore`가 `.env`를 컨텍스트에서 뺀다 — 키는 `env_file`로
-  실행 시에만 들어간다. 비루트 사용자(`app`)로 돈다.
+  venv와 `*.py`·CSV·`movie_tools/`·`movie_mcp/`만 둔다. `docker/api.Dockerfile.dockerignore`가 `.env`를
+  컨텍스트에서 뺀다 — 키는 compose `environment`로 실행 시에만 들어간다. **새 패키지 폴더를 만들면
+  Dockerfile의 COPY에도 추가할 것**(안 하면 컨테이너에서만 ImportError). 비루트 사용자(`app`)로 돈다.
 - **web 이미지는 `output: "standalone"`**(`next.config.ts`). standalone은 `public`·`.next/static`을
   복사하지 않으므로 Dockerfile에서 직접 복사한다. 빠뜨리면 페이지는 뜨는데 CSS·글꼴이 404가 된다.
 - **저장소 루트에 `Dockerfile`·`.dockerignore`를 두지 말 것.** 처음엔 루트에 뒀다가 Railway 배포가
@@ -58,17 +65,17 @@ Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — �
 
 `python` 잡이 수십 초에 끝나는 건 단위 테스트 대상(`kobis_format.py`, `sources.py`)이
 표준 라이브러리만 쓰도록 분리돼 있어 **pytest만 설치하면 되기 때문**이다.
-반면 `deps` 잡은 락 77개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
+반면 `deps` 잡은 락 85개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
 병렬로 돌아 전체 소요 시간은 크게 늘지 않는다.
 
-`agent.py`/`server.py`는 import만 해도 벡터스토어 빌드와 API 키를 요구해 CI에서 실행할 수
+`agent.py`/`server.py`는 import만 해도 API 키를 요구하고 에이전트를 만들면 벡터스토어를 빌드해 CI에서 실행할 수
 없다. `python` 잡은 `compileall`로 구문 오류만 잡고, `deps` 잡은 서드파티를 직접 import해
 패키지가 실제로 쓸 수 있는 상태인지 확인한다.
 
 주의사항:
 - **`.python-version`을 `setup-python`이 읽는다.** 로컬·Railway·CI가 같은 파일 하나를 본다.
 - `evals.yml`은 `vectorstore`를 **`imdb_top250.csv` + `imdb_data.py` 해시로 캐시**한다. 둘 중
-  하나가 바뀌면 키가 바뀌어 새로 만든다. `agent.py`도 같은 내용의 지문으로 인덱스 파일 이름을
+  하나가 바뀌면 키가 바뀌어 새로 만든다. `movie_tools/imdb.py`도 같은 내용의 지문으로 인덱스 파일 이름을
   정하므로 손으로 올릴 버전 번호는 없다.
 - Railway 볼륨(`/app/vectorstore`)에는 PDF 시절의 `index.faiss`·`index.pkl`이 남아 있다. 더는
   읽히지 않으니 두어도 되고, 지운다면 **같은 폴더의 `checkpoints.sqlite*`는 지우지 말 것**(대화 기록).
@@ -89,6 +96,11 @@ Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — �
    ```
 3. `pytest tests/unit/ -q`로 먼저 확인하고, 필요하면 `python -m tests.evals.run_evals --skip-judge`까지 돌린다.
 4. `requirements.in`과 `requirements.txt`를 **함께** 커밋한다.
+
+> **락의 플랫폼 조건은 Linux 기준이다.** `gen_lock.py`는 `sys_platform == "win32"` 같은 조건을 이 스크립트를
+> 돌린 PC가 아니라 배포 환경(linux x86_64, `TARGET_ENV`)으로 판단한다. 예전엔 현재 PC 기준이라 Windows에서
+> 락을 만들면 Windows 전용 패키지가 섞였다 — `mcp`를 추가했을 때 `pywin32==312`가 들어가 리눅스 설치가
+> 깨질 뻔했다(`docs/bug-log.md` B-010). Windows 로컬에 필요한 `colorama`·`pywin32`는 pip가 알아서 깐다.
 
 > **`pip freeze > requirements.txt`를 쓰지 말 것.** venv에는 개발 도구(pytest 등)도 설치돼
 > 있어서 freeze를 그대로 쓰면 프로덕션 락에 개발 의존성이 섞여 Railway까지 실려간다.

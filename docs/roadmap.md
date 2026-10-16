@@ -36,7 +36,7 @@ Movie Scene Finder는 검색 품질·평가를 맡고, 이 저장소는 에이�
 | `postgres` | `postgres:16` | 체크포인트, 브리핑·승인 기록 | 3 (1단계에서는 쓰는 곳이 없어 미룸) |
 | `api` | `docker/api.Dockerfile` (python:3.13-slim) | `server.py`, 에이전트 실행 | 1 |
 | `web` | `web/Dockerfile` (node:22, Next.js standalone) | 채팅 UI, `/api/chat` 프록시 | 1 |
-| `mcp` | `mcp/Dockerfile` | 영화 데이터 도구 서버 | 2 |
+| `mcp` | `docker/api.Dockerfile` (api와 같은 이미지, 명령만 다름) | 영화 데이터 도구 서버 | 2 |
 | `n8n` | `n8nio/n8n` | 트리거·실패 알림, `profiles: [automation]` | 4 |
 
 ### 설계 포인트
@@ -133,12 +133,19 @@ volumes:
 - **버전 충돌을 먼저 확인한다.** `langgraph==1.0.1`, `langchain-core==1.2.26` 고정과 `langchain-mcp-adapters` 요구 범위가 맞는지 `scripts/gen_lock.py`로 락을 다시 만들며 확인한다.
 - **네트워크 홉이 하나 늘어난다.** 전환 전후 도구 호출 지연을 trace로 비교해 기록한다.
 
+### 구현하며 바뀐 점
+
+- 패키지 이름은 `mcp/`가 아니라 `movie_mcp/`. `mcp/`는 공식 SDK를 가린다.
+- `web_search`도 MCP로 옮겼다. 남기면 에이전트 컨테이너에 Tavily 키가 필요해 완료 기준과 어긋난다.
+- MCP는 `MCP_URL`이 있을 때만 쓴다(compose). Railway 배포는 로컬 도구 그대로다.
+- 도구당 약 280ms가 늘었다(호출마다 새 세션). 원인과 대안은 `docs/bug-log.md` B-013.
+
 ### 완료 기준
 
-- [ ] MCP 전환 전후로 골든셋 결과가 같다 (18/18 유지)
-- [ ] MCP Inspector와 Claude Desktop에서 `kobis_search`가 동작한다
-- [ ] FastMCP 인메모리 클라이언트로 도구 목록·스키마·잘못된 날짜 입력을 검증하는 단위 테스트가 있다
-- [ ] 에이전트 컨테이너 환경변수에 KOBIS·Tavily 키가 없다
+- [x] MCP 전환 전후로 골든셋 결과가 같다 (18/18 유지) — 로컬·MCP 모두 18/18, judge 평균 4.94
+- [ ] MCP Inspector와 Claude Desktop에서 `kobis_search`가 동작한다 — Inspector(stdio)는 확인, Claude Desktop은 사용자 설정 후 확인
+- [x] FastMCP 인메모리 클라이언트로 도구 목록·스키마·잘못된 날짜 입력을 검증하는 단위 테스트가 있다 (`tests/mcp/`, 12개)
+- [x] 에이전트 컨테이너 환경변수에 KOBIS·Tavily 키가 없다
 
 ---
 

@@ -27,9 +27,15 @@ class _Doc:
 class _ToolMessage:
     """langchain ToolMessage 스텁."""
 
-    def __init__(self, content="", artifact=None):
+    def __init__(self, content="", artifact=None, status="success"):
         self.content = content
         self.artifact = artifact
+        self.status = status
+
+
+def _blocks(text):
+    """MCP 도구의 content 형태(langchain-mcp-adapters가 만든다)."""
+    return [{"type": "text", "text": text}]
 
 
 class TestImdbSources:
@@ -183,6 +189,49 @@ class TestImdbSqlSources:
         """모델이 잘못된 SQL을 보내 거부된 호출은 답의 근거가 아니다."""
         err = "[TOOL_ERROR code=INVALID_QUERY] SQL 실행 실패: not authorized."
         assert extract_sources("imdb_sql", _ToolMessage(content=err)) == []
+
+
+class TestMcpShapes:
+    """MCP 도구(movie_mcp/server.py)를 거치면 ToolMessage 형태가 로컬 도구와 다르다.
+
+    content는 텍스트 블록 목록, imdb_search의 artifact는 {"structured_content": {...}}다.
+    문자열만 보던 코드 그대로면 웹 출처가 사라지고, 에러 응답에도 고정 출처가 붙는다.
+    """
+
+    def test_imdb_search_structured_content에서_순위와_제목(self):
+        artifact = {"structured_content": {"movies": [
+            {"rank": 1, "title": "The Shawshank Redemption", "year": 1994},
+            {"rank": 25, "title": "The Green Mile", "year": 1999},
+        ]}}
+        out = extract_sources("imdb_search", _ToolMessage(content=_blocks("..."), artifact=artifact))
+        assert [s["label"] for s in out] == ["IMDB #1 The Shawshank Redemption", "IMDB #25 The Green Mile"]
+
+    def test_imdb_search_structured_content가_이상하면_빈_결과(self):
+        for artifact in ({}, {"structured_content": None}, {"structured_content": {"movies": "x"}}):
+            assert extract_sources("imdb_search", _ToolMessage(artifact=artifact)) == []
+
+    def test_web_search_블록_목록에서_URL을_뽑는다(self):
+        content = _blocks(json.dumps({"results": [{"url": "https://a.com", "title": "A"}]}))
+        assert [s["url"] for s in extract_sources("web_search", _ToolMessage(content=content))] == ["https://a.com"]
+
+    def test_고정_출처_도구의_에러_블록은_출처가_아니다(self):
+        content = _blocks("[TOOL_ERROR code=TIMEOUT] KOBIS API 응답 시간이 초과되었습니다.")
+        assert extract_sources("kobis_search", _ToolMessage(content=content)) == []
+
+    def test_고정_출처_도구의_정상_블록은_출처(self):
+        out = extract_sources("kobis_search", _ToolMessage(content=_blocks("일별 박스오피스 ...")))
+        assert out == [{"tool": "kobis_search", "label": "영화진흥위원회 KOBIS 오픈API", "url": KOBIS_HOME}]
+
+
+class TestErrorStatus:
+    def test_인자_검증_실패는_출처가_아니다(self):
+        """인자 검증 실패(로컬: ValidationError, MCP: isError)는 status="error" ToolMessage로 온다.
+
+        메시지가 [TOOL_ERROR로 시작하지 않아서, 예전에는 '연도 4자리' 오류에도 KOBIS 출처가 붙었다.
+        """
+        msg = _ToolMessage(content="Error invoking tool 'kobis_search' ...", status="error")
+        assert extract_sources("kobis_search", msg) == []
+        assert extract_sources("imdb_sql", msg) == []
 
 
 class TestUnknownTool:

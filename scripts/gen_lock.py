@@ -18,6 +18,20 @@ from pathlib import Path
 from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# 플랫폼 조건(sys_platform == "win32" 등)은 이 스크립트를 돌린 PC가 아니라 **배포 환경** 기준으로
+# 판단한다. 락은 Railway(linux x86_64)가 설치한다. 예전에는 현재 환경으로 판단해서, Windows에서
+# 락을 만들면 Windows 전용 패키지가 섞였다 — mcp를 추가했을 때 pywin32==312가 들어가 리눅스
+# 설치가 깨질 뻔했다(docs/bug-log.md B-010). Windows 로컬에서 필요한 colorama·pywin32는 pip가
+# 의존성으로 알아서 설치한다.
+TARGET_ENV = {
+    "sys_platform": "linux",
+    "platform_system": "Linux",
+    "os_name": "posix",
+    "platform_machine": "x86_64",
+    "implementation_name": "cpython",
+    "platform_python_implementation": "CPython",
+}
 IN_PATH = ROOT / "requirements.in"
 OUT_PATH = ROOT / "requirements.txt"
 
@@ -55,8 +69,8 @@ def resolve_closure(roots: list[str]) -> dict[str, str]:
                 req = Requirement(raw)
             except Exception:
                 continue
-            # extras 전용/환경 한정 의존성은 현재 환경 기준으로 판단한다
-            if req.marker and not req.marker.evaluate():
+            # extras 전용 의존성은 빠지고, 플랫폼 조건은 배포 환경(TARGET_ENV) 기준으로 판단한다
+            if req.marker and not req.marker.evaluate(TARGET_ENV):
                 continue
             stack.append(req.name)
     return found

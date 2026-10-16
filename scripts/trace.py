@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 
 import agent as agent_module  # noqa: E402
+import movie_tools.kobis as kobis_module  # noqa: E402
 from kobis_format import format_date_context, today_kst  # noqa: E402
 
 PREVIEW_CHARS = 160
@@ -94,8 +95,10 @@ async def main() -> int:
     today = date.fromisoformat(args.date) if args.date else today_kst()
     if args.date:
         # 프롬프트의 날짜뿐 아니라 도구의 "집계 전 날짜 차단"도 같은 날짜를 보게 한다.
-        # agent.py는 today_kst를 이름으로 가져와 호출 시점에 찾으므로 모듈 속성을 바꾸면 된다.
-        agent_module.today_kst = lambda: today
+        # movie_tools/kobis.py는 today_kst를 이름으로 가져와 호출 시점에 찾으므로 모듈 속성을 바꾸면 된다.
+        # 도구를 agent.py에서 옮긴 뒤로는 agent_module이 아니라 이 모듈을 바꿔야 한다 — 바꾸는 곳을
+        # 잘못 짚으면 에러 없이 실제 오늘 날짜로 차단해서 재현이 안 된다.
+        kobis_module.today_kst = lambda: today
 
     agent = agent_module.build_agent()
     for q in args.questions:
