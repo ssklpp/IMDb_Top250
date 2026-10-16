@@ -3,14 +3,20 @@
 RAG 답변이 어디서 왔는지 사용자가 확인할 수 있어야 환각과 사실을 구분할 수 있다.
 도구마다 출처의 형태가 완전히 달라서 각각 따로 처리한다:
 
-- imdb_search : ToolMessage.artifact 가 list[Document]. 메타데이터의 순위·제목을 쓴다.
-                (agent.py에서 response_format="content_and_artifact"로 설정해야
-                 artifact가 채워진다. 기본값 "content"면 메타데이터가 버려진다)
+- imdb_search : ToolMessage.artifact 에서 순위·제목을 쓴다. 형태가 두 가지다.
+                · 로컬 도구: list[Document] (agent.py에서 response_format="content_and_artifact"로
+                  설정해야 채워진다. 기본값 "content"면 메타데이터가 버려진다)
+                · MCP 도구: {"structured_content": {"movies": [{rank, title, year}]}}
+                  (movie_mcp/server.py가 structuredContent로 보낸 것을 어댑터가 이렇게 감싼다)
 - web_search  : content가 format_web_results()가 만든 JSON 문자열이다.
                 파싱해서 실제 URL을 꺼낸다 — 유일하게 클릭 가능한 출처다.
                 만드는 쪽과 읽는 쪽이 어긋나면 출처가 조용히 사라지므로 같은 모듈에 둔다.
 - kobis_search: 문자열만 반환하므로 URL이 없다. 기관명을 고정 출처로 붙인다.
 - imdb_sql    : 표 형태 문자열이라 개별 영화를 가리키지 않는다. 목록 전체를 고정 출처로 붙인다.
+
+MCP 도구의 content는 문자열이 아니라 블록 목록([{"type": "text", "text": ...}])으로 온다
+(langchain-mcp-adapters). 그대로 두면 웹 출처가 사라지고, 에러 응답에도 고정 출처가 붙는다.
+그래서 내용을 읽기 전에 항상 _as_text()로 문자열로 만든다.
 
 외부 의존이 없는 순수 함수라 tests/unit에서 API 호출 없이 검증한다.
 """
@@ -61,14 +67,36 @@ def format_web_results(raw) -> str | None:
     return json.dumps({"results": slim}, ensure_ascii=False)
 
 
+def _as_text(content):
+    """ToolMessage.content를 문자열로. MCP 도구는 텍스트 블록 목록으로 준다. 읽을 수 없으면 None."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+        ]
+        return "".join(parts) if parts else None
+    return None
+
+
+def _imdb_movies(artifact) -> list:
+    """두 artifact 형태에서 영화별 메타데이터 dict 목록을 꺼낸다."""
+    if isinstance(artifact, list):  # 로컬 도구: list[Document]
+        return [getattr(doc, "metadata", None) for doc in artifact]
+    if isinstance(artifact, dict):  # MCP 도구
+        structured = artifact.get("structured_content")
+        movies = structured.get("movies") if isinstance(structured, dict) else None
+        return movies if isinstance(movies, list) else []
+    return []
+
+
 def _imdb_sources(artifact) -> list[dict]:
     """검색된 영화마다 칩 하나. 검색 순서(관련도순)를 그대로 둔다 — 순위로 다시 정렬하면
     질문과 가장 가까운 영화가 뒤로 밀린다. 문서 하나가 영화 한 편이라 중복은 없다."""
-    if not isinstance(artifact, list):
-        return []
     out: list[dict] = []
-    for doc in artifact:
-        meta = getattr(doc, "metadata", None)
+    for meta in _imdb_movies(artifact):
         if not isinstance(meta, dict) or not meta.get("rank") or not meta.get("title"):
             continue
         label = f"IMDB #{meta['rank']} {meta['title']}"
@@ -79,7 +107,8 @@ def _imdb_sources(artifact) -> list[dict]:
 
 
 def _web_sources(content) -> list[dict]:
-    if not isinstance(content, str):
+    content = _as_text(content)
+    if content is None:
         return []
     try:
         data = json.loads(content)
@@ -112,13 +141,17 @@ def extract_sources(tool_name: str, output) -> list[dict]:
     반환 형태: [{"tool": str, "label": str, "url": str | None}, ...]
     추출할 게 없으면 빈 리스트를 준다(출처 UI를 그리지 않는다).
     """
+    # 인자 검증 실패(로컬은 LangChain ValidationError, MCP는 isError 결과)는 status="error"인
+    # ToolMessage로 온다. 메시지가 [TOOL_ERROR로 시작하지 않아 아래 검사를 지나 고정 출처가 붙었다.
+    if getattr(output, "status", None) == "error":
+        return []
     if tool_name == "imdb_search":
         return _imdb_sources(getattr(output, "artifact", None))
     if tool_name == "web_search":
         content = getattr(output, "content", output)
         return _web_sources(content)
     if tool_name in FIXED_SOURCES:
-        content = getattr(output, "content", output)
+        content = _as_text(getattr(output, "content", output))
         # 도구가 에러를 반환했으면 근거가 아니므로 출처로 내보내지 않는다.
         if isinstance(content, str) and content.startswith("[TOOL_ERROR"):
             return []

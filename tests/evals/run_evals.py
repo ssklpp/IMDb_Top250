@@ -43,7 +43,8 @@ from kobis_format import format_date_context, today_kst  # noqa: E402
 
 # 평가는 항목마다 새 thread_id를 쓰므로 영속화가 불필요하고,
 # 기본 MemorySaver를 써서 실제 사용자 대화 DB를 건드리지 않게 격리한다.
-agent = build_agent()
+# main()에서 만든다 — 도구를 로컬로 쓸지 MCP 서버에서 받을지(--mcp-url)가 인자로 정해진다.
+agent = None
 
 DATASET_PATH = Path(__file__).parent / "golden_dataset.json"
 
@@ -257,7 +258,21 @@ async def main() -> int:
     parser.add_argument("--skip-judge", action="store_true", help="LLM-as-judge 생략")
     parser.add_argument("--ids", nargs="*", help="특정 ID만 실행")
     parser.add_argument("--judge-model", default="gpt-5.4-mini", help="judge용 모델")
+    parser.add_argument(
+        "--mcp-url",
+        help="도구를 이 MCP 서버에서 받는다(예: http://localhost:8001/mcp). 생략하면 로컬 도구. "
+        "같은 항목을 양쪽으로 돌려 MCP 전환 전후 결과가 같은지 본다",
+    )
     args = parser.parse_args()
+
+    global agent
+    tools = None
+    if args.mcp_url:
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+
+        client = MultiServerMCPClient({"movie": {"transport": "streamable_http", "url": args.mcp_url}})
+        tools = await client.get_tools()
+    agent = build_agent(tools=tools)
 
     dataset = json.loads(DATASET_PATH.read_text(encoding="utf-8"))
     if args.ids:
@@ -267,12 +282,15 @@ async def main() -> int:
             return 1
 
     # OPENAI_API_KEY 존재 여부는 여기서 검사하지 않는다. 상단의 `from agent import ...`가
-    # 이미 임베딩 클라이언트를 생성하므로, 키가 없으면 그 시점에 실패한다.
+    # 이미 LLM 클라이언트를 생성하므로, 키가 없으면 그 시점에 실패한다.
     judge_llm: ChatOpenAI | None = None
     if not args.skip_judge:
         judge_llm = ChatOpenAI(model_name=args.judge_model, temperature=0)
 
-    print(f"평가 시작: {len(dataset)}개 항목 (judge={'on' if judge_llm else 'off'})")
+    print(
+        f"평가 시작: {len(dataset)}개 항목 (judge={'on' if judge_llm else 'off'}, "
+        f"tools={'mcp ' + args.mcp_url if args.mcp_url else 'local'})"
+    )
 
     results: list[EvalResult] = []
     for item in dataset:

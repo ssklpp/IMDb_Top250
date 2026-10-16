@@ -16,3 +16,7 @@ cachetools==7.0.5
 slowapi==0.1.10
 structlog==25.1.0
 tenacity==9.0.0
+# 영화 데이터 도구를 MCP 서버로 분리(movie_mcp/). FastMCP 서버(mcp)와 에이전트 쪽 클라이언트(adapters).
+# adapters 0.3.1부터는 langchain-core가 고정 버전(1.2.26)보다 높아야 해서 0.3.0, 그에 맞는 mcp 1.x.
+mcp==1.30.0
+langchain-mcp-adapters==0.3.0

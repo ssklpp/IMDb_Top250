@@ -34,7 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 
-from agent import build_agent, retriever  # noqa: E402
+from agent import build_agent  # noqa: E402
+from movie_tools.imdb import get_retriever  # noqa: E402
 from kobis_format import format_date_context, today_kst  # noqa: E402
 
 SET_PATH = Path(__file__).parent / "retrieval_set.json"
@@ -74,7 +75,7 @@ def fmt(vals: list[float]) -> str:
 def raw_positions(items: list[dict]) -> dict[str, tuple[int | None, list[str]]]:
     out = {}
     for it in items:
-        titles = [d.metadata["title"] for d in retriever.invoke(it["query"])]
+        titles = [d.metadata["title"] for d in get_retriever().invoke(it["query"])]
         out[it["id"]] = (first_hit(titles, it["gold"]), titles)
     return out
 
@@ -105,7 +106,7 @@ async def actual_calls(items: list[dict]) -> dict[str, list[tuple[str, str, list
 
 def report_raw(items, raw, show_all):
     header = "".join(f"Hit@{x:<3}" for x in KS) + "  MRR"
-    print(f"검색 적중률 — 원문 기준, 질문 {len(items)}개, 검색 {retriever.search_kwargs['k']}편\n")
+    print(f"검색 적중률 — 원문 기준, 질문 {len(items)}개, 검색 {get_retriever().search_kwargs['k']}편\n")
     print(f"{'구분':<22}{'개수':>4}   {header}")
 
     def row(label, group):

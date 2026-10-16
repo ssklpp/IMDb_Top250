@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 HISTORICAL = re.compile(r"였습니다|였다|당시|이전에는")
 
 # 로그 이벤트로 인정하는 접두어. 문서의 다른 백틱 표기(`kobis_format.py` 등)와 구분한다.
-EVENT_PREFIXES = ("chat", "cli", "health", "imdb", "kobis", "shutdown", "startup", "vectorstore", "web")
+EVENT_PREFIXES = ("chat", "cli", "health", "imdb", "kobis", "mcp", "shutdown", "startup", "vectorstore", "web")
 
 TEXT_SUFFIXES = (".py", ".md", ".ts", ".tsx", ".json", ".yml", ".yaml", ".toml", ".txt", ".in", ".css")
 
@@ -83,7 +83,10 @@ def ci_import_count() -> int:
 
 
 def log_events_in_code() -> set[str]:
-    code = "".join(read(f) for f in ("agent.py", "server.py", "imdb_rag.py"))
+    # 도구 구현은 movie_tools/, MCP 서버는 movie_mcp/에 있다(2단계에서 agent.py에서 옮김).
+    files = ["agent.py", "server.py", "imdb_rag.py"]
+    files += [str(p.relative_to(ROOT)) for d in ("movie_tools", "movie_mcp") for p in sorted((ROOT / d).glob("*.py"))]
+    code = "".join(read(f) for f in files)
     # 이벤트 이름이 다음 줄에 오는 경우(log.info(\n    "kobis.request", ...))도 잡도록 \s*
     names = re.findall(r'log\.(?:info|warning|exception|error)\(\s*"([a-z_]+\.[a-z_]+)"', code)
     return {n for n in names if n.split(".")[0] in EVENT_PREFIXES}

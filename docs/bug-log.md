@@ -11,6 +11,10 @@
 
 | 번호 | 날짜 | 영역 | 문제 | 상태 |
 |---|---|---|---|---|
+| [B-013](#b-013) | 2026-10-16 | MCP | MCP 도구 호출마다 약 280ms가 더 걸림 | 미해결 |
+| [B-012](#b-012) | 2026-10-16 | MCP | MCP 결과 형태가 달라 출처가 사라질 뻔함 | 해결 |
+| [B-011](#b-011) | 2026-10-16 | 서버 | 인자 검증에 실패한 도구 호출에도 출처 칩이 붙음 | 해결 |
+| [B-010](#b-010) | 2026-10-16 | 의존성 | Windows에서 만든 락에 Windows 전용 패키지가 섞임 | 해결 |
 | [B-009](#b-009) | 2026-10-16 | 서버 | 레이트리밋이 방문자별이 아니라 프록시 주소별로 걸릴 수 있음 | 미해결 |
 | [B-008](#b-008) | 2026-10-16 | 배포 | 루트에 Dockerfile을 추가하자 Railway 배포 실패 | 해결 |
 | [B-007](#b-007) | 2026-10-03 | 프론트 | 한국어 문장이 글자 중간에서 줄바꿈 | 해결 |
@@ -22,6 +26,51 @@
 | [B-001](#b-001) | 2026-10-01 | 데이터 | 잘린 PDF 때문에 정답이 코퍼스에 없었음 | 해결 |
 
 ---
+
+## B-013
+**MCP 도구 호출마다 약 280ms가 더 걸림** · MCP · 미해결 (의도적으로 둠)
+
+- **증상**: MCP 전환 후 같은 PC에서 잰 도구 지연(중앙값, 10회) — `imdb_sql` 3ms → 281ms, `imdb_search` 156ms → 436ms.
+  평가에서도 MCP 쪽 항목이 1~3초씩 느렸다.
+- **원인**: `langchain-mcp-adapters`의 `MultiServerMCPClient.get_tools()`가 만든 도구는 호출마다 세션을 새로 연다
+  (초기화 왕복 + 호출 + 종료). 네트워크 홉 자체는 몇 ms다.
+- **확인**: 세션 하나를 붙잡아 두고(`client.session()` + `load_mcp_tools(session)`) 다시 재면 6ms·164ms로 로컬과 거의 같다.
+- **두는 이유**: 세션을 붙잡으면 MCP 서버가 재시작될 때 끊긴 세션을 다시 여는 로직이 필요하다. 배포(Railway)는
+  로컬 도구를 써서 영향이 없고, MCP는 지금 compose에서만 쓴다.
+- **수정 방향**: 끊기면 한 번 다시 연결하는 세션 래퍼를 `server.py` lifespan에 둔다. 3단계(Postgres·승인) 전에
+  MCP를 배포 경로에 올리게 되면 그때 한다.
+
+## B-012
+**MCP 결과 형태가 달라 출처가 사라질 뻔함** · MCP · 해결 (2단계 PR)
+
+- **증상**: 출시 전에 발견했다. 어댑터 코드를 읽어 보니 MCP 도구의 `ToolMessage.content`는 문자열이 아니라
+  블록 목록(`[{"type": "text", ...}]`)이고, `imdb_search`의 artifact는 `list[Document]`가 아니라
+  `{"structured_content": ...}`였다.
+- **원인**: `sources.py`가 문자열·Document만 처리했다. 그대로 두면 웹 출처는 사라지고(문자열이 아니라 빈 결과),
+  KOBIS·SQL은 에러 응답에도 고정 출처가 붙고(`startswith("[TOOL_ERROR")` 검사를 건너뜀), IMDB 출처도 사라진다.
+- **수정**: `sources._as_text()`로 블록 목록을 문자열로 만들고, IMDB는 두 artifact 형태를 모두 읽는다. MCP 서버는
+  `imdb_search`가 `structuredContent`로 순위·제목을 보낸다.
+- **재발 방지**: `tests/unit/test_sources.py`의 `TestMcpShapes`, 어댑터를 실제로 거치는 `tests/mcp/`의 출처 테스트.
+
+## B-011
+**인자 검증에 실패한 도구 호출에도 출처 칩이 붙음** · 서버 · 해결 (2단계 PR)
+
+- **증상**: `kobis_search`에 연도 `"24"`처럼 잘못된 인자가 오면 검증 오류 메시지와 함께 "영화진흥위원회" 출처 칩이
+  붙었다. 근거가 아닌데 출처처럼 보인다. 로컬 도구에서도 있던 문제다(ToolNode로 재현).
+- **원인**: 검증 실패는 LangChain이 `status="error"` ToolMessage로 바꿔 모델에 주는데, 메시지가 `[TOOL_ERROR`로
+  시작하지 않아서 `sources.extract_sources()`의 에러 검사를 지나갔다.
+- **수정**: `status == "error"`면 출처를 만들지 않는다.
+- **재발 방지**: `TestErrorStatus`.
+
+## B-010
+**Windows에서 만든 락에 Windows 전용 패키지가 섞임** · 의존성 · 해결 (2단계 PR)
+
+- **증상**: `mcp`를 추가하고 `scripts/gen_lock.py`를 돌리자 `requirements.txt`에 `pywin32==312`가 들어갔다. 리눅스
+  (Railway·Docker)에는 이 패키지가 없어 `pip install -r requirements.txt`가 실패했을 것이다. 기존 락에도
+  `colorama==0.4.6`(Windows 전용 조건)이 들어 있었다 — 순수 파이썬이라 설치는 돼서 드러나지 않았다.
+- **원인**: `gen_lock.py`가 의존성의 플랫폼 조건(`sys_platform == "win32"`)을 스크립트를 돌린 PC 기준으로 판단했다.
+- **수정**: 배포 환경(linux x86_64)을 고정한 `TARGET_ENV`로 판단한다. 락은 85개(`colorama`가 빠짐).
+- **재발 방지**: `rules/ci-deps.md`에 적었다. CI `deps` 잡이 리눅스에서 락을 실제로 설치한다.
 
 ## B-009
 **레이트리밋이 방문자별이 아니라 프록시 주소별로 걸릴 수 있음** · 서버 · 미해결

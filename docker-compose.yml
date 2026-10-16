@@ -1,33 +1,68 @@
-# 로컬 원클릭 실행: cp .env.example .env → 키 입력 → docker compose up --wait → http://localhost:3000
+# 로컬 원클릭 실행: cp .env.example .env → 키 입력 → docker compose up -d --build --wait → http://localhost:3000
+#
+#   web (3000, 밖으로 열림) → api (8000, 에이전트) → mcp (8001, 영화 데이터 도구 4개)
 #
 # 브라우저는 web만 본다. web/app/api/chat/route.ts가 서버 쪽에서 BACKEND_URL로 프록시하므로
-# api 포트는 밖으로 열지 않는다(CORS 설정도 필요 없다).
+# api·mcp 포트는 밖으로 열지 않는다(CORS 설정도 필요 없다).
 #
-# 배포(Vercel·Railway)는 이 파일을 쓰지 않는다.
+# 키는 서비스마다 필요한 것만 준다(.env에서 읽어 넣는다). KOBIS·Tavily 키는 mcp만 갖는다.
+#
+# 배포(Vercel·Railway)는 이 파일을 쓰지 않는다. Railway는 MCP_URL이 없어 로컬 도구를 쓴다.
 
 # 폴더 이름(claude 등)이 아니라 고정 이름으로 컨테이너·볼륨을 만든다.
 name: movie-chatbot
 
 services:
-  api:
-    build:
+  mcp:
+    build: &app-build
       context: .
       # 루트가 아니라 docker/에 둔다. 루트에 Dockerfile이 있으면 Railway 배포가 실패한다.
       dockerfile: docker/api.Dockerfile
-    env_file: .env
+    command: ["python", "-m", "movie_mcp.server", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}   # 검색어 임베딩
+      KOBIS_API_KEY: ${KOBIS_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      # Host 헤더 검사(DNS 리바인딩 방어)에 compose 서비스 이름을 더한다. movie_mcp/server.py 참고.
+      MCP_ALLOWED_HOSTS: "mcp:*"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
-      # FAISS 인덱스와 대화 DB. down 후 다시 올려도 임베딩을 다시 하지 않고 대화도 이어진다.
-      # 지우려면 docker compose down -v.
-      - vectorstore:/app/vectorstore
+      # FAISS 인덱스. down 후 다시 올려도 임베딩을 다시 하지 않는다. 지우려면 docker compose down -v.
+      - movie_index:/app/vectorstore
     healthcheck:
-      # /health는 OpenAI 키·벡터스토어·에이전트가 준비돼야 200이다(server.py). KOBIS·Tavily 키만
-      # 없으면 degraded(200)로 뜨고 해당 도구만 실패한다.
+      # 벡터스토어가 준비돼야 200이다. 처음 뜰 때 영화 250편을 임베딩하는 동안은 실패로 세지 않는다.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 180s
+    restart: unless-stopped
+
+  api:
+    build: *app-build
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MCP_URL: http://mcp:8001/mcp
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    volumes:
+      # 대화 DB(checkpoints.sqlite). down 후 다시 올려도 대화가 이어진다.
+      - chat_db:/app/vectorstore
+    depends_on:
+      # 기동할 때 MCP 서버에서 도구 목록을 받으므로 mcp가 먼저 준비돼야 한다.
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      # /health는 에이전트·OpenAI 키·MCP 도구 4개가 준비돼야 200이다(server.py).
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
       timeout: 5s
       retries: 6
-      # 처음 뜰 때 영화 250편을 임베딩한다(볼륨이 비어 있을 때만). 그동안은 실패로 세지 않는다.
-      start_period: 180s
+      start_period: 30s
     restart: unless-stopped
 
   web:
@@ -42,4 +77,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  vectorstore:
+  movie_index:
+  chat_db:

@@ -39,7 +39,7 @@ jobs:
         run: >
           python -m compileall -q
           agent.py server.py logging_config.py imdb_rag.py
-          kobis_format.py sources.py imdb_data.py scripts tests
+          kobis_format.py sources.py imdb_data.py movie_tools movie_mcp scripts tests
 
       - name: 단위 테스트
         run: pytest tests/unit/ -q
@@ -129,6 +129,8 @@ jobs:
               ("langgraph.checkpoint.memory", "MemorySaver"),
               ("langgraph.checkpoint.sqlite", "SqliteSaver"),
               ("langgraph.checkpoint.sqlite.aio", "AsyncSqliteSaver"),
+              ("mcp.server.fastmcp", "FastMCP"),
+              ("langchain_mcp_adapters.client", "MultiServerMCPClient"),
           ]
 
           failed = []
@@ -151,6 +153,13 @@ jobs:
       # 외부 의존이 없는 모듈만 실제로 불러 본다.
       - name: 자체 모듈 import 확인
         run: python -c "import kobis_format, sources, imdb_data, logging_config; print('OK')"
+
+      # MCP 서버를 메모리 안에서 띄워 도구 목록·스키마·입력 검증을 본다. mcp·langchain이 필요해서
+      # pytest만 설치하는 python 잡이 아니라 전체 의존성이 깔린 여기서 돈다. 외부 API는 부르지 않는다.
+      - name: MCP 서버 테스트
+        run: |
+          pip install -r requirements-dev.txt
+          pytest tests/mcp/ -q
 
   # docker-compose.yml과 두 Dockerfile이 깨지지 않았는지. 이미지를 만들기만 하고 실행하지 않는다
   # (실행하면 임베딩·LLM 키가 필요하다). 배포는 이 이미지를 쓰지 않으므로 로컬 실행법을 지키는 검사다.

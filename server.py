@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
+import httpx
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,8 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from agent import CHECKPOINT_DB_PATH, build_agent, vectorstore
+from agent import CHECKPOINT_DB_PATH, build_agent
+from movie_tools import imdb
 from kobis_format import format_date_context, today_kst
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
 from sources import extract_sources
@@ -34,6 +36,11 @@ MAX_QUESTION_CHARS = 2000
 # UUID(36자)가 정상 경로. 여유를 두되 무한정 긴 키가 들어오는 것은 막는다.
 MAX_SESSION_ID_CHARS = 64
 
+# 있으면 도구를 이 MCP 서버(movie_mcp/server.py)에서 받는다(compose: http://mcp:8001/mcp).
+# 없으면 같은 프로세스의 로컬 도구를 쓴다 — Railway 배포가 이 경로다.
+MCP_URL = os.environ.get("MCP_URL", "").strip()
+EXPECTED_TOOLS = {"imdb_search", "imdb_sql", "kobis_search", "web_search"}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,8 +54,20 @@ async def lifespan(app: FastAPI):
     conn = await aiosqlite.connect(CHECKPOINT_DB_PATH)
     saver = AsyncSqliteSaver(conn)
     await saver.setup()
-    app.state.agent = build_agent(saver)
     log.info("startup.checkpointer_ready", db=CHECKPOINT_DB_PATH)
+
+    if MCP_URL:
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+
+        # 세션을 붙잡아 두지 않는다. get_tools()가 만든 도구는 호출마다 새 세션을 열어서
+        # MCP 서버가 재시작돼도 다음 호출부터 다시 붙는다.
+        client = MultiServerMCPClient({"movie": {"transport": "streamable_http", "url": MCP_URL}})
+        tools = await client.get_tools()
+        log.info("startup.mcp_tools", url=MCP_URL, tools=sorted(t.name for t in tools))
+    else:
+        tools = None  # build_agent가 local_tools()로 벡터스토어까지 불러온다
+    app.state.tool_names = sorted(t.name for t in tools) if tools else sorted(EXPECTED_TOOLS)
+    app.state.agent = build_agent(saver, tools=tools)
     try:
         yield
     finally:
@@ -115,23 +134,28 @@ async def health(response: Response):
     - 에이전트 미준비 / 벡터스토어 비어있음 / OPENAI_API_KEY 없음 → 503 (서비스 불가)
     - KOBIS·Tavily 키 없음 → 200 degraded (해당 도구만 실패하고 LLM이 우회한다)
 
-    네트워크 호출은 하지 않는다. 헬스체크가 외부 API 장애에 물려 같이 죽으면 안 된다.
+    외부 API(KOBIS·Tavily·OpenAI)는 부르지 않는다. 헬스체크가 외부 장애에 물려 같이 죽으면 안 된다.
+
+    MCP를 쓰면(MCP_URL) 벡터스토어와 KOBIS·Tavily 키는 MCP 서버 쪽에 있으므로 여기서 보지 않는다.
+    대신 도구 4개를 받았는지(치명적)와 MCP 서버가 지금 응답하는지(부분 장애)를 본다. MCP 서버는
+    같은 compose 네트워크의 내부 서비스라 1초 안에 답하지 못하면 degraded로 본다.
     """
     agent_ready = getattr(app.state, "agent", None) is not None
-    try:
-        vector_count = int(vectorstore.index.ntotal)
-    except Exception:
-        vector_count = 0
+    vector_count = imdb.vector_count()
 
     critical = {
         "agent": agent_ready,
-        "vectorstore": vector_count > 0,
         "openai_key": bool(os.environ.get("OPENAI_API_KEY")),
     }
-    optional = {
-        "kobis_key": bool(os.environ.get("KOBIS_API_KEY")),
-        "tavily_key": bool(os.environ.get("TAVILY_API_KEY")),
-    }
+    if MCP_URL:
+        critical["mcp_tools"] = set(getattr(app.state, "tool_names", [])) == EXPECTED_TOOLS
+        optional = {"mcp_reachable": await _mcp_reachable()}
+    else:
+        critical["vectorstore"] = vector_count > 0
+        optional = {
+            "kobis_key": bool(os.environ.get("KOBIS_API_KEY")),
+            "tavily_key": bool(os.environ.get("TAVILY_API_KEY")),
+        }
 
     if not all(critical.values()):
         status = "unhealthy"
@@ -152,7 +176,18 @@ async def health(response: Response):
         "status": status,
         "checks": {**critical, **optional},
         "vectorstore_chunks": vector_count,
+        "tools": "mcp" if MCP_URL else "local",
     }
+
+
+async def _mcp_reachable() -> bool:
+    """MCP 서버의 /health가 200인지. MCP_URL(…/mcp)과 같은 호스트에 있다."""
+    health_url = httpx.URL(MCP_URL).copy_with(path="/health")
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            return (await client.get(health_url)).status_code == 200
+    except httpx.HTTPError:
+        return False
 
 
 @app.post("/api/chat")

@@ -1,4 +1,5 @@
-# 백엔드(api) 이미지. docker-compose.yml에서 쓴다. Railway는 이 파일이 아니라 nixpacks로 빌드한다.
+# 백엔드 이미지. docker-compose.yml의 api(에이전트)와 mcp(영화 데이터 도구 서버)가 같은 이미지를
+# 명령만 바꿔 쓴다. 의존성이 같아서 이미지를 둘로 나눌 이유가 없다. Railway는 이 파일이 아니라 nixpacks로 빌드한다.
 #
 # 저장소 루트에 두지 않는다. 루트에 Dockerfile·.dockerignore를 두었더니 Railway 배포가 실패했다
 # (nixpacks 대신 이 파일을 쓰거나, .dockerignore가 nixpacks 빌드에도 적용된다). 빌드 컨텍스트는
@@ -21,6 +22,8 @@ ENV PATH=/venv/bin:$PATH \
 WORKDIR /app
 COPY --from=deps /venv /venv
 COPY *.py imdb_top250.csv ./
+COPY movie_tools ./movie_tools
+COPY movie_mcp ./movie_mcp
 
 # vectorstore/에 FAISS 인덱스와 대화 DB(checkpoints.sqlite)가 생긴다. compose가 named volume을
 # 여기 붙인다. 디렉터리를 미리 만들어 소유자를 정해 두면 새 볼륨이 그 소유자로 초기화된다.

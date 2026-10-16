@@ -65,19 +65,20 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 `slowapi`로 `/api/chat` 엔드포인트에 IP당 분당 10회 제한이 적용됩니다. 초과 시 429 응답을 반환합니다. `@limiter.limit("10/minute")` 데코레이터가 적용되며, FastAPI의 `Request` 객체가 첫 번째 파라미터로 필요합니다.
 
 ## 구조화 로깅 (Observability)
-`logging_config.py`가 `structlog` 기반 JSON 로거를 제공합니다. `configure_logging()`은 `server.py` / `imdb_rag.py` 진입점에서 한 번 호출됩니다.
+`logging_config.py`가 `structlog` 기반 JSON 로거를 제공합니다. `configure_logging()`은 `server.py` / `imdb_rag.py` / `movie_mcp/server.py` 진입점에서 한 번 호출됩니다.
 - **ContextVar**: `session_id_var`, `request_id_var`가 모든 로그에 자동 첨부됨. `server.py`의 `/api/chat` 핸들러가 요청마다 두 값을 바인딩
 - **환경변수**:
   - `LOG_LEVEL` (기본 `INFO`)
   - `LOG_FORMAT=json` (기본, 프로덕션용) / `LOG_FORMAT=console` (개발 시 컬러 출력)
 - **로그 이벤트** (코드에 있는 전체 목록 — 새 이벤트를 추가하면 여기도 갱신):
   - 요청: `chat.request`, `chat.cache_hit`, `chat.tool_start`, `chat.tool_end`, `chat.sources`, `chat.done`(elapsed_s, tool_calls), `chat.timeout`, `chat.unhandled_error`
-  - 서버: `startup.checkpointer_ready`, `shutdown.checkpointer_closed`, `health.not_ok`, `vectorstore.cache_hit`, `vectorstore.build_start`, `vectorstore.build_done`
+  - 서버: `startup.checkpointer_ready`, `startup.mcp_tools`(MCP_URL일 때 받은 도구 이름), `shutdown.checkpointer_closed`, `health.not_ok`, `vectorstore.cache_hit`, `vectorstore.build_start`, `vectorstore.build_done`
+  - MCP 서버(`movie_mcp/server.py`): `mcp.start`(transport). 도구 이벤트(kobis·web·imdb·vectorstore)는 그 프로세스에서 같은 이름으로 찍힌다
   - KOBIS: `kobis.request`, `kobis.success`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info), `kobis.too_recent`(호출 전 차단), `kobis.empty_result`, `kobis.no_api_key`, `kobis.timeout`, `kobis.http_error`, `kobis.network_error`, `kobis.parse_error`
   - 웹 검색: `web.request`(query_len), `web.success`, `web.empty_result`, `web.no_api_key`, `web.timeout`, `web.http_error`, `web.network_error`, `web.parse_error`
   - IMDB SQL: `imdb.sql_request`(query_len — SQL 본문은 남기지 않음), `imdb.sql_done`(rows), `imdb.sql_rejected`(error=예외 타입)
   - CLI: `cli.start`, `cli.exit`, `cli.invoke_error`
-- 모든 로그는 `stderr`로 출력되어 uvicorn 표준 로그와 섞이지 않음
+- 모든 로그는 `stderr`로 출력되어 uvicorn 표준 로그와 섞이지 않음. **MCP stdio 모드에서는 stdout이 프로토콜 통로**라 이게 필수다 — stdout에 로그나 `print()`가 섞이면 Claude Desktop 같은 클라이언트가 메시지를 해석하지 못한다
 
 `print()` 사용은 금지. 새 코드는 `from logging_config import get_logger; log = get_logger("module_name")`을 사용해야 합니다.
 
