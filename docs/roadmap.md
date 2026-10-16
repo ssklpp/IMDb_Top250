@@ -143,7 +143,7 @@ volumes:
 ### 완료 기준
 
 - [x] MCP 전환 전후로 골든셋 결과가 같다 (18/18 유지) — 로컬·MCP 모두 18/18, judge 평균 4.94
-- [ ] MCP Inspector와 Claude Desktop에서 `kobis_search`가 동작한다 — Inspector(stdio)는 확인, Claude Desktop은 사용자 설정 후 확인
+- [x] MCP Inspector와 Claude Desktop에서 `kobis_search`가 동작한다 — Inspector(stdio)로 실호출, Claude Desktop에서 박스오피스 질문 확인(2026-10-17)
 - [x] FastMCP 인메모리 클라이언트로 도구 목록·스키마·잘못된 날짜 입력을 검증하는 단위 테스트가 있다 (`tests/mcp/`, 12개)
 - [x] 에이전트 컨테이너 환경변수에 KOBIS·Tavily 키가 없다
 
