@@ -66,20 +66,22 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 
 **누구로 셀지(`ratelimit.rate_limit_key`)가 핵심이다.** 예전에는 TCP 접속 주소(`get_remote_address`)로 셌는데,
 배포 서버 앞의 Railway 프록시 주소가 요청마다 달라서 **같은 PC에서 15개를 동시에 보내도 429가 한 번도
-나지 않았다**(로컬에서는 11번째부터 정확히 걸렸다. `docs/bug-log.md` B-009). 지금은 이 순서로 정한다.
+나지 않았다**(로컬에서는 11번째부터 정확히 걸렸다. `docs/bug-log.md` B-009).
 
-1. **Vercel 경유** — `route.ts`가 `x-real-ip`(Vercel이 방문자 IP로 덮어쓰는 헤더)를 `X-Client-IP`로, 공유 비밀값을
-   `X-Proxy-Secret`으로 보낸다. 백엔드는 `PROXY_SECRET`과 일치할 때만 믿는다(`hmac.compare_digest`).
-   비밀값 없이 믿으면 누구나 IP를 바꿔 가며 제한을 피한다.
-2. **그 외** — `X-Forwarded-For`의 **맨 오른쪽** 값. 우리 쪽 프록시가 붙인 접속 주소다. 왼쪽 값은 클라이언트가
-   보낸 그대로라 위조된다.
-3. **프록시가 없는 로컬** — TCP 접속 주소.
-
-- `PROXY_SECRET`은 **Railway와 Vercel에 같은 값**을 넣는다. 한쪽만 있으면 1을 건너뛰어 Vercel 경유 방문자 전체가
-  Vercel의 나가는 주소 기준으로 묶인다(에러는 없다).
-- 로그(`chat.request`)에는 IP를 남기지 않고 `rate_key_source`(proxy·forwarded·peer)만 남긴다. 배포 후 이 값이
-  `proxy`인지로 설정을 확인한다.
+- **방문자 IP는 우리 프록시가 보낸 것만 믿는다.** `route.ts`가 `x-real-ip`(Vercel이 방문자 IP로 덮어쓰는 헤더)를
+  `X-Client-IP`로, 공유 비밀값을 `X-Proxy-Secret`으로 보낸다. 백엔드는 `PROXY_SECRET`과 일치할 때만 믿는다
+  (`hmac.compare_digest`). 비밀값 없이 믿으면 누구나 IP를 바꿔 가며 제한을 피한다.
+- **`X-Forwarded-For`는 쓰지 않는다.** 맨 오른쪽 값을 "우리 프록시가 붙인 접속 주소"로 보고 한 번 배포했는데,
+  Railway에서는 그 값도 요청마다 달라 직접 호출에 제한이 걸리지 않았다(실측). 왼쪽 값은 위조된다.
+- **비밀값이 설정된 서버는 프록시를 거치지 않은 `/api/chat`을 403으로 거절한다**(`chat.forbidden_direct`).
+  백엔드 주소로 바로 오는 요청은 방문자를 구분할 방법이 없어서, 받으면 제한 없는 LLM 호출 통로가 된다.
+  `/health`는 막지 않는다(Railway 헬스체크·`check_deploy.py`가 쓴다).
+- `PROXY_SECRET`은 **Railway와 Vercel에 같은 값**을 넣는다. 값이 어긋나면 웹 화면의 모든 질문이
+  "서버 오류(HTTP 403)"가 된다. Vercel **Preview** 환경에도 넣어야 PR 미리보기에서 질문이 된다.
+- 비밀값이 없는 환경(로컬·compose)은 TCP 접속 주소로 센다. 프록시가 하나라 모두 한 통이지만 사용자가 한 명이다.
+- 로그(`chat.request`)에는 IP를 남기지 않고 `rate_key_source`(proxy·peer)만 남긴다.
 - 제한 상태는 프로세스 메모리에 있다. 서버를 여러 개 띄우면 각자 따로 센다.
+- **레이트리밋을 고치면 로컬이 아니라 배포 서버에서 동시 요청으로 확인한다.** 로컬에는 프록시가 없어서 이 버그가 안 보였다.
 
 ## 구조화 로깅 (Observability)
 `logging_config.py`가 `structlog` 기반 JSON 로거를 제공합니다. `configure_logging()`은 `server.py` / `imdb_rag.py` / `movie_mcp/server.py` 진입점에서 한 번 호출됩니다.
@@ -88,7 +90,7 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
   - `LOG_LEVEL` (기본 `INFO`)
   - `LOG_FORMAT=json` (기본, 프로덕션용) / `LOG_FORMAT=console` (개발 시 컬러 출력)
 - **로그 이벤트** (코드에 있는 전체 목록 — 새 이벤트를 추가하면 여기도 갱신):
-  - 요청: `chat.request`, `chat.cache_hit`, `chat.tool_start`, `chat.tool_end`, `chat.sources`, `chat.done`(elapsed_s, tool_calls), `chat.timeout`, `chat.unhandled_error`
+  - 요청: `chat.request`(rate_key_source), `chat.forbidden_direct`(비밀값 없는 직접 호출 거절), `chat.cache_hit`, `chat.tool_start`, `chat.tool_end`, `chat.sources`, `chat.done`(elapsed_s, tool_calls), `chat.timeout`, `chat.unhandled_error`
   - 서버: `startup.checkpointer_ready`, `startup.mcp_tools`(MCP_URL일 때 받은 도구 이름), `shutdown.checkpointer_closed`, `health.not_ok`, `vectorstore.cache_hit`, `vectorstore.build_start`, `vectorstore.build_done`
   - MCP 서버(`movie_mcp/server.py`): `mcp.start`(transport). 도구 이벤트(kobis·web·imdb·vectorstore)는 그 프로세스에서 같은 이름으로 찍힌다
   - KOBIS: `kobis.request`, `kobis.success`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info), `kobis.too_recent`(호출 전 차단), `kobis.empty_result`, `kobis.no_api_key`, `kobis.timeout`, `kobis.http_error`, `kobis.network_error`, `kobis.parse_error`

@@ -12,7 +12,7 @@ import httpx
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field, field_validator
@@ -23,7 +23,7 @@ from agent import CHECKPOINT_DB_PATH, build_agent
 from movie_tools import imdb
 from kobis_format import format_date_context, today_kst
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
-from ratelimit import rate_limit_key
+from ratelimit import from_proxy, rate_limit_key
 from sources import extract_sources
 
 configure_logging()
@@ -206,6 +206,14 @@ async def _mcp_reachable() -> bool:
 @app.post("/api/chat")
 @limiter.limit("10/minute")
 async def chat(request: Request, req: QuestionRequest):
+    # 비밀값이 설정된 서버(배포)는 프록시(route.ts)를 거친 요청만 받는다. 백엔드 주소로 바로 오는 요청은
+    # 방문자를 구분할 방법이 없어 레이트리밋이 걸리지 않는다 — LLM 비용 공격의 통로다(B-009).
+    if PROXY_SECRET and not from_proxy(request.headers, PROXY_SECRET):
+        log.warning("chat.forbidden_direct")
+        return JSONResponse(
+            {"code": "FORBIDDEN", "error": "웹 화면을 통해 질문해 주세요."}, status_code=403
+        )
+
     request_id = str(uuid.uuid4())
     session_was_new = req.session_id is None
     session_id = req.session_id or str(uuid.uuid4())
