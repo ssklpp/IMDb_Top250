@@ -1,6 +1,17 @@
 import { NextRequest } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
+// 백엔드의 PROXY_SECRET과 같은 값. 있으면 방문자 IP를 함께 넘겨 백엔드가 방문자별로 레이트리밋을 건다.
+// 없으면 넘기지 않는다(로컬·compose). 백엔드가 받는 TCP 주소는 이 프록시라 방문자를 구분할 수 없다.
+const PROXY_SECRET = process.env.PROXY_SECRET;
+
+/** 레이트리밋용 헤더. Vercel이 x-real-ip를 방문자 IP로 덮어쓰므로 클라이언트가 위조할 수 없다
+ * (@vercel/functions의 ipAddress()가 읽는 것과 같은 헤더). */
+function clientIpHeaders(req: NextRequest): Record<string, string> {
+  const ip = req.headers.get("x-real-ip")?.trim();
+  if (!PROXY_SECRET || !ip) return {};
+  return { "X-Client-IP": ip, "X-Proxy-Secret": PROXY_SECRET };
+}
 
 export async function POST(req: NextRequest) {
   const { question, session_id } = await req.json();
@@ -16,7 +27,7 @@ export async function POST(req: NextRequest) {
   try {
     res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...clientIpHeaders(req) },
       body: JSON.stringify({ question, session_id }),
     });
   } catch {

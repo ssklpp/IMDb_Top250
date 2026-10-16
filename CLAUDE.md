@@ -110,6 +110,7 @@ python -m tests.evals.run_retrieval                # 검색 적중률 (임베딩
 logging_config.py ← 공통: structlog JSON 로거 + ContextVar(session_id/request_id)
 kobis_format.py   ← 순수 함수: 영화 판별(pick_movie), 날짜/응답 가공, 현재 날짜 문장·집계 가능일 판정. 외부 의존 없음
 sources.py        ← 순수 함수: 도구 출력에서 답변 출처 추출. 외부 의존 없음
+ratelimit.py      ← 순수 함수: 레이트리밋 키(방문자 IP) 판정. 외부 의존 없음
 imdb_data.py      ← 순수 함수: IMDB CSV → 영화별 검색 문서, 인덱스 지문, 읽기 전용 SQL 실행. 외부 의존 없음
 movie_tools/      ← 도구 4개의 구현과 이름·설명 상수(imdb·kobis·web). 로컬 도구와 MCP 서버가 함께 쓴다.
                     벡터스토어는 처음 필요할 때 만든다(imdb.load_vectorstore)
@@ -232,7 +233,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 125개 + 문서-코드 대조 (pytest만 설치) | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 132개 + 문서-코드 대조 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** + `tests/mcp/` | **0** |
 | `ci.yml` | `docker` | `docker compose build` — 로컬 원클릭 실행이 깨지지 않았는지 | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
@@ -280,6 +281,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | 새 도구 추가 | `agent.local_tools()`와 `movie_mcp/server.py` 양쪽 등록, `server.EXPECTED_TOOLS`, `page.tsx`의 도구 상태 라벨과 `sourceTone()`·`stubParts()`, URL 없는 도구면 `sources.FIXED_SOURCES` | 한쪽 경로에만 도구가 생김, MCP 모드 `/health` 503, 상태가 영어 함수명으로 표시, 출처 칩 없음 | `rules/tools.md` |
 | 도구 이름·설명·인자 | `movie_tools/`의 상수만 고친다(로컬·MCP가 같이 씀). `tests/mcp/`가 두 경로 정의를 비교 | 로컬과 MCP의 모델 입력이 달라져 평가가 갈림 | `rules/tools.md` |
 | `kobis_search`가 오늘 날짜를 읽는 곳 | `scripts/trace.py --date`가 바꾸는 모듈(`movie_tools.kobis.today_kst`) | 재현 날짜가 "집계 전 차단"에 안 먹어 에러 없이 실제 날짜로 동작 | `rules/tools.md` |
+| 레이트리밋 키 헤더(`X-Client-IP`·`X-Proxy-Secret`) | `route.ts`의 `clientIpHeaders()`와 `ratelimit.py`, 비밀값은 Vercel·Railway의 `PROXY_SECRET`에 **같은 값** | 에러 없이 모든 요청이 키를 못 정해 제한이 안 걸리거나 엉뚱하게 묶임 | `rules/server.md` |
 | `MAX_QUESTION_CHARS`(2000) | `server.py`와 `page.tsx` 양쪽 | 입력창과 서버 제한이 어긋남 | `rules/server.md` |
 | `sources.format_web_results()` | `sources._web_sources()` | 출처 칩만 사라짐 | `rules/server.md` |
 | 새 `tool_error` 코드 | `SYSTEM_PROMPT`의 `## 도구 에러 처리` | LLM이 대처 방법을 모름 | `rules/tools.md` |
@@ -308,7 +310,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 5. 도구·프롬프트·모델을 고쳤으면 에이전트 평가. **과금된다** — 관련 항목(`--ids`)부터 돌리고
    프롬프트·모델 변경은 전체 18개를 돌린다.
 
-현재 상태: 단위 테스트 125개 전부 통과, 평가 **18/18 전부 통과**.
+현재 상태: 단위 테스트 132개 전부 통과, 평가 **18/18 전부 통과**.
 
 숫자(테스트·평가·의존성 개수)는 여러 문서에 흩어져 있다. 어긋나면 `scripts/check_docs.py`가
 어느 파일 몇 번째 줄인지 알려준다. 과거를 설명하는 문장(~였습니다)은 검사하지 않으니 그대로 둘 것.
