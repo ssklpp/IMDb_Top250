@@ -40,10 +40,14 @@ Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — �
 - **`vectorstore` named volume**에 인덱스와 `checkpoints.sqlite`가 함께 있다. Railway 볼륨과 같은 구조라
   `down` 후 다시 올려도 임베딩을 반복하지 않고 대화도 이어진다.
 - **api 이미지는 2단계 빌드**: `requirements.txt`(락)만 먼저 복사해 설치 층을 캐시하고, 실행 이미지에는
-  venv와 `*.py`·CSV만 둔다. 루트 `.dockerignore`가 `.env`를 컨텍스트에서 뺀다 — 키는 `env_file`로
+  venv와 `*.py`·CSV만 둔다. `docker/api.Dockerfile.dockerignore`가 `.env`를 컨텍스트에서 뺀다 — 키는 `env_file`로
   실행 시에만 들어간다. 비루트 사용자(`app`)로 돈다.
 - **web 이미지는 `output: "standalone"`**(`next.config.ts`). standalone은 `public`·`.next/static`을
   복사하지 않으므로 Dockerfile에서 직접 복사한다. 빠뜨리면 페이지는 뜨는데 CSS·글꼴이 404가 된다.
+- **저장소 루트에 `Dockerfile`·`.dockerignore`를 두지 말 것.** 처음엔 루트에 뒀다가 Railway 배포가
+  실패했다(배포는 nixpacks인데 Railway가 루트의 Docker 파일을 집어 든다). 그래서 api용은
+  `docker/api.Dockerfile`, 제외 목록은 BuildKit의 Dockerfile별 규칙으로 `docker/api.Dockerfile.dockerignore`에
+  둔다. 빌드 컨텍스트는 여전히 루트다. `web/Dockerfile`은 Railway가 보지 않는 하위 폴더라 괜찮다.
 - **Python 버전은 `.python-version`과 손으로 맞춘다.** Dockerfile의 `python:3.13-slim`은 그 파일을
   읽지 않는다. 버전을 올릴 때 함께 고칠 것.
 - Postgres는 아직 없다. 체크포인터를 Postgres로 바꾸는 단계(`docs/roadmap.md` 3단계)에서 추가한다.
