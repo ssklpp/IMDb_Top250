@@ -28,6 +28,26 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
   특히 `AsyncSqliteSaver`는 `langgraph-checkpoint-sqlite`라는 **별도 패키지**라 빠지기 쉽다.
 - `requirements.in`과 락의 드리프트 검사 — `.in`에 추가하고 `gen_lock.py`를 잊는 실수를 막는다
 
+## `docker` 잡과 컨테이너 구성
+`docker-compose.yml`은 **로컬 원클릭 실행용**이다(`api` + `web`). 배포는 여전히 nixpacks(Railway)와
+Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — 그래서 CI에서 이미지 빌드만 확인한다.
+실행은 하지 않는다(OpenAI 키와 임베딩이 필요해 비용이 든다).
+
+- **브라우저는 `web`만 본다.** `route.ts`가 서버 쪽에서 `BACKEND_URL=http://api:8000`으로 프록시하므로
+  api 포트를 열지 않고 CORS 설정도 필요 없다.
+- **`web`은 `api`의 `/health`가 200이 된 뒤에 뜬다**(`depends_on: service_healthy`). 처음 뜰 때는 250편
+  임베딩이 끝나야 200이라 `start_period`를 길게 뒀다.
+- **`vectorstore` named volume**에 인덱스와 `checkpoints.sqlite`가 함께 있다. Railway 볼륨과 같은 구조라
+  `down` 후 다시 올려도 임베딩을 반복하지 않고 대화도 이어진다.
+- **api 이미지는 2단계 빌드**: `requirements.txt`(락)만 먼저 복사해 설치 층을 캐시하고, 실행 이미지에는
+  venv와 `*.py`·CSV만 둔다. 루트 `.dockerignore`가 `.env`를 컨텍스트에서 뺀다 — 키는 `env_file`로
+  실행 시에만 들어간다. 비루트 사용자(`app`)로 돈다.
+- **web 이미지는 `output: "standalone"`**(`next.config.ts`). standalone은 `public`·`.next/static`을
+  복사하지 않으므로 Dockerfile에서 직접 복사한다. 빠뜨리면 페이지는 뜨는데 CSS·글꼴이 404가 된다.
+- **Python 버전은 `.python-version`과 손으로 맞춘다.** Dockerfile의 `python:3.13-slim`은 그 파일을
+  읽지 않는다. 버전을 올릴 때 함께 고칠 것.
+- Postgres는 아직 없다. 체크포인터를 Postgres로 바꾸는 단계(`docs/roadmap.md` 3단계)에서 추가한다.
+
 ## 두 워크플로를 나눈 기준은 비용
 `ci.yml`은 **외부 API를 전혀 호출하지 않아** 시크릿 없이 돌고 포크 PR에서도 안전하다.
 `evals.yml`만 실제 LLM을 부르므로 수동 실행이다.

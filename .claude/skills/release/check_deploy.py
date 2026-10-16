@@ -22,7 +22,7 @@ import urllib.request
 
 REPO = "ssklpp/IMDb_Top250"
 HEALTH_URL = "https://imdbtop250-production.up.railway.app/health"
-EXPECTED_CHECKS = 3  # ci.yml의 python / deps / frontend
+EXPECTED_CHECKS = 4  # ci.yml의 python / deps / docker / frontend
 POLL_S = 20
 TIMEOUT_S = 600
 

@@ -1,0 +1,15 @@
+# 백엔드 이미지에는 *.py와 CSV만 복사하지만, 빌드 컨텍스트로 보내는 것 자체를 줄인다.
+# .env는 특히 이미지에 들어가면 안 된다 — 키는 compose의 env_file로 실행 시에만 넣는다.
+.env*
+.git
+.venv
+.claude
+.github
+.pytest_cache
+__pycache__
+vectorstore
+web
+docs
+rules
+scripts
+tests
