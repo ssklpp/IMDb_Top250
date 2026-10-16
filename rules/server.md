@@ -62,7 +62,24 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 멀쩡한 서버가 재시작 루프에 빠집니다.
 
 ## 레이트 리미팅
-`slowapi`로 `/api/chat` 엔드포인트에 IP당 분당 10회 제한이 적용됩니다. 초과 시 429 응답을 반환합니다. `@limiter.limit("10/minute")` 데코레이터가 적용되며, FastAPI의 `Request` 객체가 첫 번째 파라미터로 필요합니다.
+`slowapi`로 `/api/chat` 엔드포인트에 방문자당 분당 10회 제한이 적용됩니다. 초과 시 429 응답을 반환합니다. `@limiter.limit("10/minute")` 데코레이터가 적용되며, FastAPI의 `Request` 객체가 첫 번째 파라미터로 필요합니다.
+
+**누구로 셀지(`ratelimit.rate_limit_key`)가 핵심이다.** 예전에는 TCP 접속 주소(`get_remote_address`)로 셌는데,
+배포 서버 앞의 Railway 프록시 주소가 요청마다 달라서 **같은 PC에서 15개를 동시에 보내도 429가 한 번도
+나지 않았다**(로컬에서는 11번째부터 정확히 걸렸다. `docs/bug-log.md` B-009). 지금은 이 순서로 정한다.
+
+1. **Vercel 경유** — `route.ts`가 `x-real-ip`(Vercel이 방문자 IP로 덮어쓰는 헤더)를 `X-Client-IP`로, 공유 비밀값을
+   `X-Proxy-Secret`으로 보낸다. 백엔드는 `PROXY_SECRET`과 일치할 때만 믿는다(`hmac.compare_digest`).
+   비밀값 없이 믿으면 누구나 IP를 바꿔 가며 제한을 피한다.
+2. **그 외** — `X-Forwarded-For`의 **맨 오른쪽** 값. 우리 쪽 프록시가 붙인 접속 주소다. 왼쪽 값은 클라이언트가
+   보낸 그대로라 위조된다.
+3. **프록시가 없는 로컬** — TCP 접속 주소.
+
+- `PROXY_SECRET`은 **Railway와 Vercel에 같은 값**을 넣는다. 한쪽만 있으면 1을 건너뛰어 Vercel 경유 방문자 전체가
+  Vercel의 나가는 주소 기준으로 묶인다(에러는 없다).
+- 로그(`chat.request`)에는 IP를 남기지 않고 `rate_key_source`(proxy·forwarded·peer)만 남긴다. 배포 후 이 값이
+  `proxy`인지로 설정을 확인한다.
+- 제한 상태는 프로세스 메모리에 있다. 서버를 여러 개 띄우면 각자 따로 센다.
 
 ## 구조화 로깅 (Observability)
 `logging_config.py`가 `structlog` 기반 JSON 로거를 제공합니다. `configure_logging()`은 `server.py` / `imdb_rag.py` / `movie_mcp/server.py` 진입점에서 한 번 호출됩니다.

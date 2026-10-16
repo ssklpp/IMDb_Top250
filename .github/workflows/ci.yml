@@ -39,7 +39,7 @@ jobs:
         run: >
           python -m compileall -q
           agent.py server.py logging_config.py imdb_rag.py
-          kobis_format.py sources.py imdb_data.py movie_tools movie_mcp scripts tests
+          kobis_format.py sources.py imdb_data.py ratelimit.py movie_tools movie_mcp scripts tests
 
       - name: 단위 테스트
         run: pytest tests/unit/ -q
@@ -152,7 +152,7 @@ jobs:
       # 앱 모듈(agent.py)은 import만 해도 벡터스토어를 빌드하려 해서 CI에서 실행할 수 없다.
       # 외부 의존이 없는 모듈만 실제로 불러 본다.
       - name: 자체 모듈 import 확인
-        run: python -c "import kobis_format, sources, imdb_data, logging_config; print('OK')"
+        run: python -c "import kobis_format, sources, imdb_data, ratelimit, logging_config; print('OK')"
 
       # MCP 서버를 메모리 안에서 띄워 도구 목록·스키마·입력 검증을 본다. mcp·langchain이 필요해서
       # pytest만 설치하는 python 잡이 아니라 전체 의존성이 깔린 여기서 돈다. 외부 API는 부르지 않는다.

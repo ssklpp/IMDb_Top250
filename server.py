@@ -18,12 +18,12 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from agent import CHECKPOINT_DB_PATH, build_agent
 from movie_tools import imdb
 from kobis_format import format_date_context, today_kst
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
+from ratelimit import rate_limit_key
 from sources import extract_sources
 
 configure_logging()
@@ -86,7 +86,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-limiter = Limiter(key_func=get_remote_address)
+# Vercel 프록시(route.ts)와 같은 값을 설정해야 방문자 IP 헤더(X-Client-IP)를 믿는다. 없으면 무시한다.
+PROXY_SECRET = os.environ.get("PROXY_SECRET", "").strip() or None
+
+
+def _rate_key(request: Request) -> str:
+    """TCP 접속 주소(get_remote_address)로 세지 않는다 — 배포에서는 Railway 프록시 주소라 요청마다
+    달라서 제한이 전혀 걸리지 않았다(docs/bug-log.md B-009). 판단 규칙은 ratelimit.py."""
+    key, _ = rate_limit_key(
+        request.headers, request.client.host if request.client else None, PROXY_SECRET
+    )
+    return key
+
+
+limiter = Limiter(key_func=_rate_key)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -207,7 +220,10 @@ async def chat(request: Request, req: QuestionRequest):
         "chat.request",
         question_len=len(req.question),
         new_session=session_was_new,
-        client=get_remote_address(request),
+        # 방문자 IP 원문은 남기지 않는다. 어떤 근거로 셌는지만 남겨 프록시 설정이 맞는지 확인한다.
+        rate_key_source=rate_limit_key(
+            request.headers, request.client.host if request.client else None, PROXY_SECRET
+        )[1],
     )
 
     if session_was_new and cache_key in _response_cache:
