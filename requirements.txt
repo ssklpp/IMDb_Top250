@@ -40,6 +40,7 @@ langchain-openai==1.1.12
 langchain-text-splitters==1.0.0
 langgraph==1.0.1
 langgraph-checkpoint==3.0.0
+langgraph-checkpoint-postgres==3.0.4
 langgraph-checkpoint-sqlite==3.0.3
 langgraph-prebuilt==1.0.1
 langgraph-sdk==0.2.9
@@ -55,6 +56,9 @@ orjson==3.11.3
 ormsgpack==1.11.0
 packaging==25.0
 propcache==0.4.1
+psycopg==3.3.6
+psycopg-binary==3.3.6
+psycopg-pool==3.3.3
 pydantic==2.12.3
 pydantic-core==2.41.4
 pydantic-settings==2.11.0

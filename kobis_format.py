@@ -179,6 +179,19 @@ def latest_boxoffice_date(search_type: str, today: date) -> date:
     return today - timedelta(days=today.weekday() + 1)  # 직전 일요일
 
 
+def briefing_week(today: date) -> tuple[str, date, date]:
+    """주간 브리핑 대상 주. (thread_id, 월요일, 일요일)을 준다.
+
+    KOBIS가 집계를 마친 가장 최근 주(= 직전 일요일이 속한 월~일)다. thread_id를 주차로 정해
+    같은 주에 브리핑이 두 번 시작돼도 하나로 모인다(briefing-2026-W41). ISO 주차라 연말에
+    1월 초 며칠이 전년도 W53/W52에 속할 수 있다 — 연도도 isocalendar의 것을 쓴다.
+    """
+    sunday = latest_boxoffice_date("weekly", today)
+    monday = sunday - timedelta(days=6)
+    iso_year, iso_week, _ = sunday.isocalendar()
+    return f"briefing-{iso_year}-W{iso_week:02d}", monday, sunday
+
+
 def boxoffice_too_recent(search_type: str, query: str, today: date) -> str | None:
     """아직 집계 전인 날짜면 안내 문구를, 조회 가능하면 None을 반환한다.
 

@@ -24,7 +24,8 @@ Railway 배포 실패를 **푸시 시점에** 잡는다. 과거에 배포본이 
 
 - `ubuntu-latest` + `.python-version`(3.13) — **nixpacks가 쓰는 것과 같은 조건**
 - `pip install -r requirements.txt` — Railway가 실행하는 것과 같은 명령
-- 서드파티 20개를 실제로 import — 설치 성공과 사용 가능은 다르다.
+- 서드파티 23개를 실제로 import — 설치 성공과 사용 가능은 다르다.
+- `tests/integration/` — Postgres 서비스 컨테이너로 브리핑 승인 흐름(재시작·중복 승인·만료)을 검사한다.
 - `tests/mcp/` — MCP 서버를 메모리 안에서 띄워 도구 정의·입력 검증을 본다. mcp·langchain이 필요해서
   pytest만 까는 `python` 잡이 아니라 여기서 돈다. 외부 API는 부르지 않는다.
   특히 `AsyncSqliteSaver`는 `langgraph-checkpoint-sqlite`라는 **별도 패키지**라 빠지기 쉽다.
@@ -46,9 +47,9 @@ Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — �
   임베딩을 반복하지 않고 대화도 이어진다.
 - **Railway는 MCP를 쓰지 않는다.** `MCP_URL`이 없으면 `server.py`가 로컬 도구를 쓴다. 배포 구성은 그대로다.
 - **api 이미지는 2단계 빌드**: `requirements.txt`(락)만 먼저 복사해 설치 층을 캐시하고, 실행 이미지에는
-  venv와 `*.py`·CSV·`movie_tools/`·`movie_mcp/`만 둔다. `docker/api.Dockerfile.dockerignore`가 `.env`를
-  컨텍스트에서 뺀다 — 키는 compose `environment`로 실행 시에만 들어간다. **새 패키지 폴더를 만들면
-  Dockerfile의 COPY에도 추가할 것**(안 하면 컨테이너에서만 ImportError). 비루트 사용자(`app`)로 돈다.
+  venv와 코드만 둔다. 코드는 `COPY . .`로 전부 복사하고 **뺄 것은 `docker/api.Dockerfile.dockerignore`가
+  정한다**(`.env`, `web`, `tests`, 문서 등). 예전엔 COPY로 폴더를 나열했는데, 그 규칙을 적어 두고도 새 패키지
+  (`briefing/`)를 빠뜨려 컨테이너에서만 ImportError가 났다(B-017). 키는 compose `environment`로 실행 시에만 들어간다. 비루트 사용자(`app`)로 돈다.
 - **web 이미지는 `output: "standalone"`**(`next.config.ts`). standalone은 `public`·`.next/static`을
   복사하지 않으므로 Dockerfile에서 직접 복사한다. 빠뜨리면 페이지는 뜨는데 CSS·글꼴이 404가 된다.
 - **저장소 루트에 `Dockerfile`·`.dockerignore`를 두지 말 것.** 처음엔 루트에 뒀다가 Railway 배포가
@@ -57,7 +58,10 @@ Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — �
   둔다. 빌드 컨텍스트는 여전히 루트다. `web/Dockerfile`은 Railway가 보지 않는 하위 폴더라 괜찮다.
 - **Python 버전은 `.python-version`과 손으로 맞춘다.** Dockerfile의 `python:3.13-slim`은 그 파일을
   읽지 않는다. 버전을 올릴 때 함께 고칠 것.
-- Postgres는 아직 없다. 체크포인터를 Postgres로 바꾸는 단계(`docs/roadmap.md` 3단계)에서 추가한다.
+- **`postgres` 서비스**(3단계): api의 대화 체크포인트와 브리핑 상태. 포트는 열지 않는다. `pg_data` 볼륨.
+  api는 `postgres`·`mcp`가 healthy가 된 뒤 뜬다. Railway에는 Postgres가 없다(사용자 결정) — `DATABASE_URL`이 없으면 SQLite.
+- **`psycopg-binary`를 `requirements.in`에 직접 적는다.** `psycopg[binary]`의 extra는 `gen_lock.py`가 따라가지 않아 락에서
+  빠지고, 그러면 `python:3.13-slim`(libpq 없음)에서 import가 실패한다.
 
 ## 두 워크플로를 나눈 기준은 비용
 `ci.yml`은 **외부 API를 전혀 호출하지 않아** 시크릿 없이 돌고 포크 PR에서도 안전하다.
@@ -65,7 +69,7 @@ Vercel이라, 이 파일이 깨져도 배포에는 티가 나지 않는다 — �
 
 `python` 잡이 수십 초에 끝나는 건 단위 테스트 대상(`kobis_format.py`, `sources.py`)이
 표준 라이브러리만 쓰도록 분리돼 있어 **pytest만 설치하면 되기 때문**이다.
-반면 `deps` 잡은 락 85개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
+반면 `deps` 잡은 락 89개를 전부 설치하므로 몇 분 걸린다 — 그래서 잡을 나눴다.
 병렬로 돌아 전체 소요 시간은 크게 늘지 않는다.
 
 `agent.py`/`server.py`는 import만 해도 API 키를 요구하고 에이전트를 만들면 벡터스토어를 빌드해 CI에서 실행할 수

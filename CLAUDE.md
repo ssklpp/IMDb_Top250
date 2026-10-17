@@ -70,6 +70,7 @@ cd web && npm run lint             # ESLint 검사
 ```bash
 pytest tests/unit/ -q                               # 단위 테스트 (API 호출 없음, 0.1초, 비용 0)
 pytest tests/mcp/ -q                                # MCP 서버 테스트 (메모리 안, API 호출 없음, 2초)
+TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres pytest tests/integration -q  # 브리핑 (Postgres 필요, 방법은 파일 docstring)
 python -m tests.evals.run_evals --mcp-url http://localhost:8001/mcp   # 도구를 MCP 서버에서 받아 평가
 python -m tests.evals.run_evals --skip-judge        # 에이전트 평가, judge 채점만 생략
 python -m tests.evals.run_evals                     # LLM-as-judge 포함
@@ -115,6 +116,7 @@ imdb_data.py      ← 순수 함수: IMDB CSV → 영화별 검색 문서, 인�
 movie_tools/      ← 도구 4개의 구현과 이름·설명 상수(imdb·kobis·web). 로컬 도구와 MCP 서버가 함께 쓴다.
                     벡터스토어는 처음 필요할 때 만든다(imdb.load_vectorstore)
 mcp_client.py     ← MCP 세션 하나를 붙잡아 두고 끊기면 다시 연결(server.py가 MCP_URL일 때). 테스트는 tests/mcp(structlog 필요)
+briefing/         ← 주간 브리핑 승인 그래프(초안→interrupt→발송), briefing_runs 테이블, 관리자 API. Postgres일 때만 켜짐
 movie_mcp/        ← MCP 서버(FastMCP). movie_tools를 MCP 도구로 등록만 한다. `mcp/`로 이름 짓지 말 것(SDK를 가린다)
 agent.py          ← LLM, SYSTEM_PROMPT, local_tools(), build_agent() 팩토리
 imdb_rag.py       ← CLI 루프 (sync SqliteSaver)
@@ -124,6 +126,7 @@ scripts/check_docs.py ← 문서의 숫자·로그 이벤트·제어 문자·참
 scripts/trace.py    ← 질문 하나를 실행하며 도구 호출 인자·결과·토큰을 추적 (진단용, 과금)
 tests/unit/       ← pytest 단위 테스트 (kobis_format, sources, imdb_data + 골든셋 근거 검사)
 tests/mcp/        ← MCP 서버를 메모리 안에서 띄우는 테스트(도구 정의 동일성·입력 검증) + mcp_client 재연결. 전체 의존성 필요
+tests/integration/ ← 실제 Postgres로 브리핑 승인 흐름(재시작·중복 승인·만료) 검사. TEST_DATABASE_URL 없으면 건너뜀
 tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 ```
 
@@ -158,7 +161,8 @@ CSV나 `imdb_data.py`의 변환 형식이 바뀌면 이름이 달라져 **자동
 Retriever는 `search_kwargs={"k": 8}`으로 쿼리당 영화 8편을 반환합니다.
 
 ### 대화 영속화
-각 세션은 `thread_id`(UUID)로 구분되며, **SQLite 체크포인터에 저장되어 프로세스가 재시작돼도 유지됩니다.**
+각 세션은 `thread_id`(UUID)로 구분되며, **체크포인터에 저장되어 프로세스가 재시작돼도 유지됩니다.**
+`DATABASE_URL`이 있으면 Postgres(`AsyncPostgresSaver`, compose), 없으면 SQLite 파일(Railway·로컬)이다.
 
 - **DB 경로**: `CHECKPOINT_DB_PATH` 환경변수, 기본값 `vectorstore/checkpoints.sqlite`.
   기본값을 `vectorstore/` 아래로 둔 이유는 Railway에서 이미 `/app/vectorstore`가 영구 볼륨으로
@@ -236,8 +240,8 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 132개 + 문서-코드 대조 (pytest만 설치) | **0** |
-| `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** + `tests/mcp/` | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 136개 + 문서-코드 대조 (pytest만 설치) | **0** |
+| `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** + `tests/mcp/` + `tests/integration/`(Postgres 서비스) | **0** |
 | `ci.yml` | `docker` | `docker compose build` — 로컬 원클릭 실행이 깨지지 않았는지 | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
 | `evals.yml` | — | 에이전트 회귀 평가 18개 (`workflow_dispatch` 수동) | 발생 |
@@ -247,8 +251,8 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | 파일 | 역할 |
 |---|---|
 | `.python-version` | `3.13`. pyenv(로컬)와 nixpacks(Railway)가 **같은 파일을 읽는다**. nixpacks 지원 상한이 3.13이므로 그 이상으로 올릴 수 없다. |
-| `requirements.in` | 사람이 편집하는 **직접 의존성 14개** (프로덕션). |
-| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 85개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
+| `requirements.in` | 사람이 편집하는 **직접 의존성 18개** (프로덕션). |
+| `requirements.txt` | `requirements.in`에서 생성된 **전체 의존성 락 89개**. 자동 생성물이므로 직접 편집 금지. nixpacks가 이 파일로 설치한다. |
 | `requirements-dev.txt` | 개발 전용(pytest). **프로덕션 락과 분리**되어 Railway에는 설치되지 않는다. |
 
 ## 코드 규칙
@@ -285,6 +289,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | 도구 이름·설명·인자 | `movie_tools/`의 상수만 고친다(로컬·MCP가 같이 씀). `tests/mcp/`가 두 경로 정의를 비교 | 로컬과 MCP의 모델 입력이 달라져 평가가 갈림 | `rules/tools.md` |
 | `kobis_search`가 오늘 날짜를 읽는 곳 | `scripts/trace.py --date`가 바꾸는 모듈(`movie_tools.kobis.today_kst`) | 재현 날짜가 "집계 전 차단"에 안 먹어 에러 없이 실제 날짜로 동작 | `rules/tools.md` |
 | 레이트리밋 키 헤더(`X-Client-IP`·`X-Proxy-Secret`) | `route.ts`의 `clientIpHeaders()`와 `ratelimit.py`, 비밀값은 Vercel·Railway의 `PROXY_SECRET`에 **같은 값** | 값이 어긋나면 웹 화면의 모든 질문이 403, 헤더 이름이 어긋나면 에러 없이 Vercel 주소로 묶임 | `rules/server.md` |
+| 새 패키지 폴더 | 할 일 없음 — `docker/api.Dockerfile`은 `COPY . .`, 뺄 것만 `api.Dockerfile.dockerignore`에. **이미지에 넣으면 안 되는 폴더를 만들면 거기에 추가** | `.env`·문서가 이미지에 들어감 | `rules/ci-deps.md` |
 | `MAX_QUESTION_CHARS`(2000) | `server.py`와 `page.tsx` 양쪽 | 입력창과 서버 제한이 어긋남 | `rules/server.md` |
 | `sources.format_web_results()` | `sources._web_sources()` | 출처 칩만 사라짐 | `rules/server.md` |
 | 새 `tool_error` 코드 | `SYSTEM_PROMPT`의 `## 도구 에러 처리` | LLM이 대처 방법을 모름 | `rules/tools.md` |
@@ -313,7 +318,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 5. 도구·프롬프트·모델을 고쳤으면 에이전트 평가. **과금된다** — 관련 항목(`--ids`)부터 돌리고
    프롬프트·모델 변경은 전체 18개를 돌린다.
 
-현재 상태: 단위 테스트 132개 전부 통과, 평가 **18/18 전부 통과**.
+현재 상태: 단위 테스트 136개 전부 통과, 평가 **18/18 전부 통과**.
 
 숫자(테스트·평가·의존성 개수)는 여러 문서에 흩어져 있다. 어긋나면 `scripts/check_docs.py`가
 어느 파일 몇 번째 줄인지 알려준다. 과거를 설명하는 문장(~였습니다)은 검사하지 않으니 그대로 둘 것.

@@ -20,3 +20,11 @@ tenacity==9.0.0
 # adapters 0.3.1부터는 langchain-core가 고정 버전(1.2.26)보다 높아야 해서 0.3.0, 그에 맞는 mcp 1.x.
 mcp==1.30.0
 langchain-mcp-adapters==0.3.0
+# 대화 체크포인트·브리핑을 Postgres에(DATABASE_URL이 있을 때만, 지금은 compose). 3.0.5부터는
+# langgraph-checkpoint 고정(3.0.0)보다 높은 버전을 요구해서 3.0.4.
+langgraph-checkpoint-postgres==3.0.4
+psycopg==3.3.6
+# psycopg[binary]의 extra는 락 생성기가 따라가지 않으므로 바이너리 패키지를 직접 적는다. 없으면 리눅스에서
+# 시스템 libpq를 찾다가 import가 실패한다(python:3.13-slim에는 libpq가 없다).
+psycopg-binary==3.3.6
+psycopg-pool==3.3.3

@@ -16,7 +16,7 @@ RAG 답변이 어디서 왔는지 사용자가 확인할 수 있어야 환각과
 
 MCP 도구의 content는 문자열이 아니라 블록 목록([{"type": "text", "text": ...}])으로 온다
 (langchain-mcp-adapters). 그대로 두면 웹 출처가 사라지고, 에러 응답에도 고정 출처가 붙는다.
-그래서 내용을 읽기 전에 항상 _as_text()로 문자열로 만든다.
+그래서 내용을 읽기 전에 항상 as_text()로 문자열로 만든다.
 
 외부 의존이 없는 순수 함수라 tests/unit에서 API 호출 없이 검증한다.
 """
@@ -67,7 +67,7 @@ def format_web_results(raw) -> str | None:
     return json.dumps({"results": slim}, ensure_ascii=False)
 
 
-def _as_text(content):
+def as_text(content):
     """ToolMessage.content를 문자열로. MCP 도구는 텍스트 블록 목록으로 준다. 읽을 수 없으면 None."""
     if isinstance(content, str):
         return content
@@ -107,7 +107,7 @@ def _imdb_sources(artifact) -> list[dict]:
 
 
 def _web_sources(content) -> list[dict]:
-    content = _as_text(content)
+    content = as_text(content)
     if content is None:
         return []
     try:
@@ -151,7 +151,7 @@ def extract_sources(tool_name: str, output) -> list[dict]:
         content = getattr(output, "content", output)
         return _web_sources(content)
     if tool_name in FIXED_SOURCES:
-        content = _as_text(getattr(output, "content", output))
+        content = as_text(getattr(output, "content", output))
         # 도구가 에러를 반환했으면 근거가 아니므로 출처로 내보내지 않는다.
         if isinstance(content, str) and content.startswith("[TOOL_ERROR"):
             return []
