@@ -1,0 +1,96 @@
+{
+  "id": "WeeklyBriefing01",
+  "name": "주간 박스오피스 브리핑 트리거",
+  "active": false,
+  "settings": { "executionOrder": "v1", "timezone": "Asia/Seoul" },
+  "nodes": [
+    {
+      "id": "b1f0a0e0-0000-4000-8000-000000000001",
+      "name": "매주 월요일 10시·15시",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 10,15 * * 1" }] }
+      }
+    },
+    {
+      "id": "b1f0a0e0-0000-4000-8000-000000000002",
+      "name": "수동 실행",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 200],
+      "parameters": {}
+    },
+    {
+      "id": "b1f0a0e0-0000-4000-8000-000000000003",
+      "name": "브리핑 시작 요청",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BRIEFING_API_URL }}/briefings/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $env.ADMIN_TOKEN }}" }]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": { "response": { "fullResponse": true, "neverError": true } }
+        }
+      }
+    },
+    {
+      "id": "b1f0a0e0-0000-4000-8000-000000000004",
+      "name": "실패했나",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [520, 100],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "combinator": "or",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": { "type": "number", "operation": "notEquals" }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.body.briefing.status }}",
+              "rightValue": "failed",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b1f0a0e0-0000-4000-8000-000000000005",
+      "name": "실패 알림",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 0],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_REVIEW_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: '주간 브리핑 실패 (HTTP ' + $json.statusCode + '): ' + ($json.body.briefing ? $json.body.briefing.error : JSON.stringify($json.body)), allowed_mentions: { parse: [] } }) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "매주 월요일 10시·15시": { "main": [[{ "node": "브리핑 시작 요청", "type": "main", "index": 0 }]] },
+    "수동 실행": { "main": [[{ "node": "브리핑 시작 요청", "type": "main", "index": 0 }]] },
+    "브리핑 시작 요청": { "main": [[{ "node": "실패했나", "type": "main", "index": 0 }]] },
+    "실패했나": { "main": [[{ "node": "실패 알림", "type": "main", "index": 0 }], []] }
+  },
+  "pinData": {}
+}

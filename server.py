@@ -15,19 +15,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AnyUrl, BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from agent import CHECKPOINT_DB_PATH, build_agent, local_tools
+from agent import CHECKPOINT_DB_PATH, build_agent, llm, local_tools
 from briefing.api import router as briefing_router
+from briefing.discord import DiscordSender
 from briefing.graph import BriefingService, LogSender, build_graph
 from briefing.store import BriefingStore
+from briefing.writer import write_draft
+from movie_tools import kobis
 from movie_tools import imdb
 from kobis_format import format_date_context, today_kst
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
 from ratelimit import from_proxy, rate_limit_key
-from sources import as_text, extract_sources
+from sources import extract_sources
 
 configure_logging()
 log = get_logger("server")
@@ -86,6 +89,7 @@ async def lifespan(app: FastAPI):
             await saver.setup()
             log.info("startup.checkpointer_ready", db=CHECKPOINT_DB_PATH)
 
+        mcp_session = None
         if MCP_URL:
             from langchain_mcp_adapters.client import MultiServerMCPClient
             from langchain_mcp_adapters.tools import load_mcp_tools
@@ -107,28 +111,40 @@ async def lifespan(app: FastAPI):
 
         app.state.briefing = None
         if pool is not None:
-            app.state.briefing = await _build_briefing(pool, saver, tools)
+            app.state.briefing = await _build_briefing(pool, saver, mcp_session)
 
         yield
     log.info("shutdown.checkpointer_closed")
 
 
-async def _build_briefing(pool, saver, tools) -> BriefingService:
-    """브리핑 그래프. 초안은 에이전트와 같은 kobis_search 도구로 만든다 — compose에서는 MCP 도구라
-    이 컨테이너에 KOBIS 키가 없어도 된다."""
+async def _build_briefing(pool, saver, mcp_session) -> BriefingService:
+    """브리핑 그래프. KOBIS 원본은 MCP 리소스(kobis://weekly/…)로 받는다 — compose에서는 이 컨테이너에 KOBIS 키가
+    없어도 된다. MCP가 없으면(로컬 실행) 같은 함수를 직접 부른다. 초안은 에이전트와 같은 LLM이 쓴다."""
     store = BriefingStore(pool)
     await store.setup()
-    kobis_tool = next(t for t in tools if t.name == "kobis_search")
 
-    async def draft_fn(week_start: str, week_end: str) -> str:
-        out = await kobis_tool.ainvoke({"query": week_end.replace("-", ""), "search_type": "weekly"})
-        text = as_text(getattr(out, "content", out)) or ""
-        if text.startswith("[TOOL_ERROR"):
-            return text
-        return f"주간 박스오피스 브리핑 ({week_start} ~ {week_end})\n\n{text}"
+    async def fetch_fn(target_dt: str) -> dict:
+        if mcp_session is not None:
+            result = await mcp_session.read_resource(AnyUrl(f"kobis://weekly/{target_dt}"))
+            return json.loads(result.contents[0].text)
+        return await asyncio.to_thread(kobis.fetch_weekly_raw, target_dt)
 
-    graph = build_graph(saver, store, draft_fn, LogSender())
-    log.info("startup.briefing_ready")
+    async def write_fn(report: dict, feedback: list[str] | None) -> dict:
+        return await write_draft(llm, report, feedback)
+
+    # 웹훅이 없으면 보내지 않고 기록만 한다(LogSender). 승인 요청 알림은 리뷰용 웹훅이 따로 있을 때만.
+    webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    review_webhook = os.environ.get("DISCORD_REVIEW_WEBHOOK_URL", "").strip()
+    graph = build_graph(
+        saver,
+        store,
+        fetch_fn,
+        write_fn,
+        DiscordSender(webhook) if webhook else LogSender(),
+        notifier=DiscordSender(review_webhook) if review_webhook else None,
+        review_url=os.environ.get("ADMIN_URL", "http://localhost:3000/admin/briefings"),
+    )
+    log.info("startup.briefing_ready", channel="discord" if webhook else "log", review_notice=bool(review_webhook))
     return BriefingService(graph, store, BRIEFING_APPROVAL_TTL_HOURS)
 
 

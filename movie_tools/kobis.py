@@ -337,3 +337,22 @@ def kobis_search(
             "PARSE_ERROR",
             f"KOBIS 응답 파싱 실패: {e}. web_search로 대신 시도해보세요.",
         )
+
+
+def fetch_weekly_raw(target_dt: str) -> dict:
+    """주간(월~일) 박스오피스 원본 응답. 브리핑이 쓴다(kobis_format.parse_weekly로 읽는다).
+
+    에이전트 도구(kobis_search)는 사람이 읽을 문장을 주지만 브리핑은 숫자를 직접 계산해야 해서 원본이 필요하다.
+    키가 없거나 날짜가 틀리면 ValueError, 네트워크 오류는 requests 예외 그대로 — 호출부가 실패로 기록한다.
+    """
+    api_key = os.environ.get("KOBIS_API_KEY")
+    if not api_key:
+        raise ValueError("KOBIS_API_KEY가 없습니다.")
+    if not is_valid_date(target_dt):
+        raise ValueError(f"날짜 형식이 아닙니다: {target_dt!r}")
+    log.info("kobis.weekly_raw", target_dt=target_dt)
+    return _kobis_get(
+        f"{KOBIS_BASE}/boxoffice/searchWeeklyBoxOfficeList.json",
+        {"key": api_key, "targetDt": target_dt, "weekGb": WEEK_GB["weekly"]},
+    )
+

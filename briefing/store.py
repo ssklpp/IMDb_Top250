@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS briefing_runs (
     sent_at     TIMESTAMPTZ,
     delivery_id TEXT,
     error       TEXT,
+    draft_attempts INT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 )
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS briefing_runs (
 
 COLUMNS = (
     "thread_id, week_start, week_end, status, draft, final_text, decided_by, decided_at, "
-    "sent_at, delivery_id, error, created_at, updated_at"
+    "sent_at, delivery_id, error, draft_attempts, created_at, updated_at"
 )
 
 
@@ -46,6 +47,8 @@ class BriefingStore:
     async def setup(self) -> None:
         async with self.pool.connection() as conn:
             await conn.execute(SCHEMA)
+            # 3단계에서 만든 테이블에 4단계 칼럼을 더한다. 이미 있으면 아무 일도 안 한다.
+            await conn.execute("ALTER TABLE briefing_runs ADD COLUMN IF NOT EXISTS draft_attempts INT")
 
     async def create_if_absent(self, thread_id: str, week_start, week_end) -> bool:
         """이번 주 브리핑을 처음 만들면 True. 이미 있으면 False(트리거가 두 번 와도 하나만 생긴다)."""
@@ -66,13 +69,23 @@ class BriefingStore:
             )
             return await cur.fetchall()
 
-    async def set_pending(self, thread_id: str, draft: str) -> None:
-        """초안이 나오면 승인 대기로. drafted일 때만 — 노드가 다시 돌아도 승인된 건을 되돌리지 않는다."""
+    async def set_pending(self, thread_id: str, draft: str, attempts: int | None = None) -> None:
+        """초안이 나오면 승인 대기로. drafted일 때만 — 노드가 다시 돌아도 승인된 건을 되돌리지 않는다.
+        attempts는 초안을 몇 번 만에 검사를 통과했는지(모델이 숫자를 쓰는 빈도를 보는 운영 지표)."""
         await self._one(
-            "UPDATE briefing_runs SET status = 'pending', draft = %s, updated_at = now() "
+            "UPDATE briefing_runs SET status = 'pending', draft = %s, draft_attempts = %s, updated_at = now() "
             "WHERE thread_id = %s AND status = 'drafted' RETURNING thread_id",
-            (draft, thread_id),
+            (draft, attempts, thread_id),
         )
+
+    async def reset_failed(self, thread_id: str) -> bool:
+        """실패한 브리핑을 다시 돌릴 수 있게 drafted로. failed일 때만."""
+        row = await self._one(
+            "UPDATE briefing_runs SET status = 'drafted', error = NULL, draft = NULL, updated_at = now() "
+            "WHERE thread_id = %s AND status = 'failed' RETURNING thread_id",
+            (thread_id,),
+        )
+        return row is not None
 
     async def set_failed(self, thread_id: str, error: str) -> None:
         await self._one(

@@ -12,6 +12,7 @@ CI에서는 deps 잡이 Postgres 서비스 컨테이너를 띄워 돌린다. 외
 """
 
 import asyncio
+import json
 import os
 import sys
 import uuid
@@ -32,7 +33,19 @@ from briefing.store import BriefingStore  # noqa: E402
 DB = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DB, reason="TEST_DATABASE_URL이 없으면 건너뛴다")
 
-WEEK = (date(2026, 10, 12), date(2026, 10, 18))
+# 저장해 둔 실제 KOBIS 응답(tests/fixtures)의 주. 전주(20261004)도 있어서 비교까지 돈다.
+WEEK = (date(2026, 10, 5), date(2026, 10, 11))
+FIX = Path(__file__).resolve().parents[1] / "fixtures"
+GOOD_DRAFT = {
+    "headline": "암살자(들)이 정상을 지킨 가운데 룩백이 순위권으로 뛰어올랐다",
+    "comments": [{"rank": 6, "title": "룩백", "comment": "전주 순위권 밖에서 단숨에 올라온 역주행"}],
+    "summary": "상위권은 그대로였고 중하위권에 변화가 컸다.",
+}
+BAD_DRAFT = {**GOOD_DRAFT, "summary": "암살자(들)이 75만 명을 모았다."}  # 모델 글에 숫자 → 검사에 걸린다
+
+
+def fixture(target_dt):
+    return json.loads((FIX / f"kobis_weekly_{target_dt}.json").read_text(encoding="utf-8"))
 
 
 def run(coro):
@@ -54,8 +67,10 @@ class FakeSender:
 class App:
     """서버 한 프로세스에 해당하는 묶음. 재시작은 닫고 새로 만드는 것으로 흉내 낸다."""
 
-    def __init__(self, sender, draft="1위. 테스트 영화 — 관객수: 1,000명", ttl=48):
-        self.sender, self.draft_text, self.ttl, self.draft_calls = sender, draft, ttl, 0
+    def __init__(self, sender, drafts=(GOOD_DRAFT,), fetch=fixture, ttl=48, notifier=None):
+        """drafts: 모델이 차례로 돌려줄 초안들(마지막 것을 계속 준다). fetch: YYYYMMDD → KOBIS 원본(실패면 예외)."""
+        self.sender, self.drafts, self.fetch, self.ttl, self.notifier = sender, list(drafts), fetch, ttl, notifier
+        self.draft_calls, self.feedback = 0, []
 
     async def __aenter__(self):
         self.pool = AsyncConnectionPool(
@@ -67,11 +82,16 @@ class App:
         self.store = BriefingStore(self.pool)
         await self.store.setup()
 
-        async def draft_fn(week_start, week_end):
-            self.draft_calls += 1
-            return self.draft_text
+        async def fetch_fn(target_dt):
+            return self.fetch(target_dt)
 
-        graph = build_graph(saver, self.store, draft_fn, self.sender)
+        async def write_fn(report, feedback):
+            self.feedback.append(feedback)
+            d = self.drafts[min(self.draft_calls, len(self.drafts) - 1)]
+            self.draft_calls += 1
+            return d
+
+        graph = build_graph(saver, self.store, fetch_fn, write_fn, self.sender, self.notifier, "http://admin")
         self.service = BriefingService(graph, self.store, self.ttl)
         return self
 
@@ -113,7 +133,9 @@ def test_승인_대기_중_재시작해도_승인하면_발송된다():
     row = run(go())
     assert row["status"] == "sent"
     assert row["delivery_id"] == "fake-1"
-    assert sender.sent == ["1위. 테스트 영화 — 관객수: 1,000명"]
+    assert len(sender.sent) == 1
+    # 발송문 숫자는 원자료 그대로(모델이 쓴 게 아니라 render가 찍은 것)
+    assert "1위 암살자(들) — 759,106명 (누적 2,993,844명)" in sender.sent[0]
 
 
 def test_승인을_동시에_두_번_보내도_한_번만_발송():
@@ -205,16 +227,111 @@ def test_만료되면_승인해도_발송되지_않는다():
     assert sender.sent == []
 
 
-def test_초안을_못_만들면_승인을_요청하지_않는다():
-    """KOBIS가 실패하면(집계 전·장애) 빈 브리핑을 승인 대기에 올리지 않는다."""
+def test_KOBIS가_실패하면_승인을_요청하지_않는다():
+    """집계 전·장애로 원자료가 없으면 빈 브리핑을 승인 대기에 올리지 않는다."""
+    def broken(target_dt):
+        raise ConnectionError("kobis down")
+
     async def go():
         tid = new_id()
-        async with App(FakeSender(), draft="[TOOL_ERROR code=NO_DATA] 아직 집계 전") as app:
+        async with App(FakeSender(), fetch=broken) as app:
+            row, _ = await app.service.run(tid, *WEEK)
+            return row, app.draft_calls
+
+    row, draft_calls = run(go())
+    assert row["status"] == "failed" and "KOBIS 조회 실패" in row["error"]
+    assert draft_calls == 0  # 모델을 부르지도 않는다
+
+
+def test_집계_기간이_대상_주와_다르면_보내지_않는다():
+    """'지난 주'에 1년 전 데이터를 답한 적이 있다. KOBIS가 다른 주를 주면 승인 대기에도 올리지 않는다."""
+    async def go():
+        tid = new_id()
+        # 무엇을 물어도 2026-10-05~11 응답을 주는 KOBIS — 대상 주(2025-10-06~12)와 기간이 어긋난다.
+        async with App(FakeSender(), fetch=lambda target_dt: fixture("20261011")) as app:
+            row, _ = await app.service.run(tid, date(2025, 10, 6), date(2025, 10, 12))
+            return row
+
+    row = run(go())
+    assert row["status"] == "failed" and "대상 주" in row["error"]
+
+
+def test_모델이_숫자를_쓰면_한_번_다시_쓰게_한다():
+    """첫 초안이 검사에 걸리면 문제를 알려 주고 한 번 더 쓴다. 두 번째가 통과하면 승인 대기."""
+    async def go():
+        tid = new_id()
+        async with App(FakeSender(), drafts=(BAD_DRAFT, GOOD_DRAFT)) as app:
+            row, _ = await app.service.run(tid, *WEEK)
+            return row, app.feedback
+
+    row, feedback = run(go())
+    assert row["status"] == "pending" and row["draft_attempts"] == 2
+    assert feedback[0] is None and any("숫자" in f for f in feedback[1])
+    assert "75만" not in row["draft"]
+
+
+def test_두_번_다_검사에_걸리면_발송하지_않는다():
+    """원자료와 다른 숫자가 든 초안은 사람이 승인하기 전에 막힌다(완료 기준)."""
+    async def go():
+        tid = new_id()
+        async with App(FakeSender(), drafts=(BAD_DRAFT,)) as app:
+            row, _ = await app.service.run(tid, *WEEK)
+            return row, app.draft_calls
+
+    row, draft_calls = run(go())
+    assert row["status"] == "failed" and "초안 검사 실패" in row["error"]
+    assert draft_calls == 2 and row["draft"] is None
+
+
+def test_실패한_주는_다시_트리거하면_처음부터_다시_돈다():
+    """월요일 아침에 KOBIS 집계가 아직이면 실패한다. 오후에 다시 트리거하면 그 주를 다시 만들어야 한다."""
+    calls = {"n": 0}
+
+    def flaky(target_dt):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("not yet")
+        return fixture(target_dt)
+
+    async def go():
+        tid = new_id()
+        async with App(FakeSender(), fetch=flaky) as app:
+            first, _ = await app.service.run(tid, *WEEK)
+            second, created = await app.service.run(tid, *WEEK)
+            return first, second, created
+
+    first, second, created = run(go())
+    assert first["status"] == "failed"
+    assert second["status"] == "pending" and created is False and second["error"] is None
+
+
+def test_전주를_못_가져와도_이번_주_브리핑은_만든다():
+    def no_prev(target_dt):
+        if target_dt != "20261011":
+            raise ConnectionError("prev missing")
+        return fixture(target_dt)
+
+    async def go():
+        tid = new_id()
+        async with App(FakeSender(), fetch=no_prev) as app:
             row, _ = await app.service.run(tid, *WEEK)
             return row
 
     row = run(go())
-    assert row["status"] == "failed" and row["error"].startswith("[TOOL_ERROR code=NO_DATA]")
+    assert row["status"] == "pending" and "순위권 진입" not in row["draft"]
+
+
+def test_승인_대기가_되면_검토자에게_한_번_알린다():
+    notifier = FakeSender()
+
+    async def go():
+        tid = new_id()
+        async with App(FakeSender(), notifier=notifier) as app:
+            await app.service.run(tid, *WEEK)
+            await app.service.decide(tid, "approve", None, "a")  # 재개해도 알림이 다시 가면 안 된다
+
+    run(go())
+    assert len(notifier.sent) == 1 and "승인 대기" in notifier.sent[0] and "http://admin" in notifier.sent[0]
 
 
 def test_결정_기록_후_재개_전에_죽었다면_재시도로_발송된다():
@@ -226,7 +343,7 @@ def test_결정_기록_후_재개_전에_죽었다면_재시도로_발송된다(
         tid = new_id()
         async with App(sender) as app:
             await app.service.run(tid, *WEEK)
-            await app.store.decide(tid, True, "1위. 테스트 영화 — 관객수: 1,000명", "a")  # 기록만 하고 '죽음'
+            await app.store.decide(tid, True, "발송문", "a")  # 기록만 하고 '죽음'
         async with App(sender) as app:
             return await app.service.decide(tid, "approve", None, "a")
 

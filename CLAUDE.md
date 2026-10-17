@@ -76,6 +76,7 @@ python -m tests.evals.run_evals --skip-judge        # 에이전트 평가, judge
 python -m tests.evals.run_evals                     # LLM-as-judge 포함
 python -m tests.evals.run_evals --ids imdb-001      # 특정 항목만
 python -m tests.evals.run_retrieval                # 검색 적중률 (임베딩만, 1센트 미만)
+python -m tests.evals.run_briefing --show          # 브리핑 초안 검사 통과율 (LLM 10번, 과금)
 ```
 
 **코드를 고쳤으면 `pytest tests/unit/`를 먼저 돌릴 것.** 0.1초면 끝나고 비용이 없다.
@@ -116,7 +117,8 @@ imdb_data.py      ← 순수 함수: IMDB CSV → 영화별 검색 문서, 인�
 movie_tools/      ← 도구 4개의 구현과 이름·설명 상수(imdb·kobis·web). 로컬 도구와 MCP 서버가 함께 쓴다.
                     벡터스토어는 처음 필요할 때 만든다(imdb.load_vectorstore)
 mcp_client.py     ← MCP 세션 하나를 붙잡아 두고 끊기면 다시 연결(server.py가 MCP_URL일 때). 테스트는 tests/mcp(structlog 필요)
-briefing/         ← 주간 브리핑 승인 그래프(초안→interrupt→발송), briefing_runs 테이블, 관리자 API. Postgres일 때만 켜짐
+briefing/         ← 주간 브리핑: 원자료 비교·검증·조립(report.py, 순수), LLM 글(writer.py), 그래프(fetch→compare→draft⇄validate→승인 interrupt→발송),
+                    briefing_runs 테이블, 관리자 API, Discord 발송. Postgres일 때만 켜짐. 트리거는 automation/n8n/
 movie_mcp/        ← MCP 서버(FastMCP). movie_tools를 MCP 도구로 등록만 한다. `mcp/`로 이름 짓지 말 것(SDK를 가린다)
 agent.py          ← LLM, SYSTEM_PROMPT, local_tools(), build_agent() 팩토리
 imdb_rag.py       ← CLI 루프 (sync SqliteSaver)
@@ -126,6 +128,7 @@ scripts/check_docs.py ← 문서의 숫자·로그 이벤트·제어 문자·참
 scripts/trace.py    ← 질문 하나를 실행하며 도구 호출 인자·결과·토큰을 추적 (진단용, 과금)
 tests/unit/       ← pytest 단위 테스트 (kobis_format, sources, imdb_data + 골든셋 근거 검사)
 tests/mcp/        ← MCP 서버를 메모리 안에서 띄우는 테스트(도구 정의 동일성·입력 검증) + mcp_client 재연결. 전체 의존성 필요
+tests/fixtures/   ← 실제 KOBIS 주간 응답 두 주(키 없음). 브리핑 단위·통합 테스트와 평가가 쓴다
 tests/integration/ ← 실제 Postgres로 브리핑 승인 흐름(재시작·중복 승인·만료) 검사. TEST_DATABASE_URL 없으면 건너뜀
 tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 ```
@@ -240,7 +243,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 
 | 파일 | 잡 | 내용 | 비용 |
 |---|---|---|---|
-| `ci.yml` | `python` | 구문 검사 + 단위 테스트 136개 + 문서-코드 대조 (pytest만 설치) | **0** |
+| `ci.yml` | `python` | 구문 검사 + 단위 테스트 151개 + 문서-코드 대조 (pytest만 설치) | **0** |
 | `ci.yml` | `deps` | **프로덕션 의존성이 배포 환경에서 설치되는지** + `tests/mcp/` + `tests/integration/`(Postgres 서비스) | **0** |
 | `ci.yml` | `docker` | `docker compose build` — 로컬 원클릭 실행이 깨지지 않았는지 | **0** |
 | `ci.yml` | `frontend` | ESLint + 프로덕션 빌드 | **0** |
@@ -287,6 +290,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | `server.py`의 센티넬(`\x1f…`) 추가 | `page.tsx`의 정규식 alternation | 신호 문자가 답변에 그대로 출력 | `rules/server.md` |
 | 새 도구 추가 | `agent.local_tools()`와 `movie_mcp/server.py` 양쪽 등록, `server.EXPECTED_TOOLS`, `page.tsx`의 도구 상태 라벨과 `sourceTone()`·`stubParts()`, URL 없는 도구면 `sources.FIXED_SOURCES` | 한쪽 경로에만 도구가 생김, MCP 모드 `/health` 503, 상태가 영어 함수명으로 표시, 출처 칩 없음 | `rules/tools.md` |
 | 도구 이름·설명·인자 | `movie_tools/`의 상수만 고친다(로컬·MCP가 같이 씀). `tests/mcp/`가 두 경로 정의를 비교 | 로컬과 MCP의 모델 입력이 달라져 평가가 갈림 | `rules/tools.md` |
+| 브리핑 숫자 표기(`briefing/report.render`) | `validate_draft`의 숫자 금지 규칙은 그대로 — 숫자는 render만 찍는다 | 모델이 쓴 틀린 숫자가 사람 승인을 거쳐 발송될 수 있음 | `rules/server.md` |
 | `kobis_search`가 오늘 날짜를 읽는 곳 | `scripts/trace.py --date`가 바꾸는 모듈(`movie_tools.kobis.today_kst`) | 재현 날짜가 "집계 전 차단"에 안 먹어 에러 없이 실제 날짜로 동작 | `rules/tools.md` |
 | 레이트리밋 키 헤더(`X-Client-IP`·`X-Proxy-Secret`) | `route.ts`의 `clientIpHeaders()`와 `ratelimit.py`, 비밀값은 Vercel·Railway의 `PROXY_SECRET`에 **같은 값** | 값이 어긋나면 웹 화면의 모든 질문이 403, 헤더 이름이 어긋나면 에러 없이 Vercel 주소로 묶임 | `rules/server.md` |
 | 새 패키지 폴더 | 할 일 없음 — `docker/api.Dockerfile`은 `COPY . .`, 뺄 것만 `api.Dockerfile.dockerignore`에. **이미지에 넣으면 안 되는 폴더를 만들면 거기에 추가** | `.env`·문서가 이미지에 들어감 | `rules/ci-deps.md` |
@@ -318,7 +322,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 5. 도구·프롬프트·모델을 고쳤으면 에이전트 평가. **과금된다** — 관련 항목(`--ids`)부터 돌리고
    프롬프트·모델 변경은 전체 18개를 돌린다.
 
-현재 상태: 단위 테스트 136개 전부 통과, 평가 **18/18 전부 통과**.
+현재 상태: 단위 테스트 151개 전부 통과, 평가 **18/18 전부 통과**.
 
 숫자(테스트·평가·의존성 개수)는 여러 문서에 흩어져 있다. 어긋나면 `scripts/check_docs.py`가
 어느 파일 몇 번째 줄인지 알려준다. 과거를 설명하는 문장(~였습니다)은 검사하지 않으니 그대로 둘 것.

@@ -176,3 +176,27 @@ def test_도구_이름이_그대로다(name):
         return [t.name for t in (await session.list_tools()).tools]
 
     assert name in run(go)
+
+
+def test_KOBIS_주간_원본은_도구가_아니라_리소스다(monkeypatch):
+    """브리핑은 숫자를 직접 계산하려고 KOBIS 원본이 필요하다. 이걸 도구로 내보내면 에이전트(LLM)의 도구 목록에도
+    올라가 챗봇의 도구 선택과 평가가 바뀐다. 그래서 리소스 템플릿으로만 내보내고, 도구는 4개 그대로여야 한다."""
+    import json as _json
+
+    fixture = _json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "kobis_weekly_20261011.json").read_text(encoding="utf-8")
+    )
+    asked = []
+    monkeypatch.setattr(kobis, "fetch_weekly_raw", lambda d: asked.append(d) or fixture)
+
+    async def go(session):
+        templates = (await session.list_resource_templates()).resourceTemplates
+        result = await session.read_resource("kobis://weekly/20261011")
+        tools = (await session.list_tools()).tools
+        return templates, result, tools
+
+    templates, result, tools = run(go)
+    assert any(t.uriTemplate == "kobis://weekly/{target_dt}" for t in templates)
+    assert _json.loads(result.contents[0].text)["boxOfficeResult"]["showRange"] == "20261005~20261011"
+    assert asked == ["20261011"]
+    assert len(tools) == 4
