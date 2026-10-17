@@ -284,8 +284,8 @@ n8n은 시각에 맞춰 `POST /briefings/run`을 호출하고 실패 응답이�
 
 ### 완료 기준
 
-- [ ] `docker compose --profile automation up` 후 n8n 수동 실행으로 초안 → 승인 → Discord 수신까지 된다 —
-      가짜 웹훅 서버로 전 과정 확인(리뷰 알림·발송·실패 알림). 실제 Discord는 웹훅 URL을 받은 뒤 확인
+- [x] `docker compose --profile automation up` 후 n8n 수동 실행으로 초안 → 승인 → Discord 수신까지 된다 —
+      가짜 웹훅 서버로 전 과정(리뷰 알림·발송·실패 알림)을, 실제 Discord로 승인 요청 알림과 발송(메시지 ID 수신)을 확인(2026-10-17)
 - [x] 초안에 원자료와 다른 숫자를 넣은 테스트에서 `validate`가 발송을 막는다 — 단위·통합 테스트(두 번 다 걸리면 failed)
 - [x] 트리거를 연달아 두 번 보내도 브리핑이 하나만 생긴다 — 통합 테스트, n8n 재실행
 - [x] n8n 워크플로 JSON을 저장소에 넣어 가져오기만 하면 재현된다 — 컨테이너 기동 때 import·publish
