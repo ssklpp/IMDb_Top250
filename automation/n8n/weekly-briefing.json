@@ -30,7 +30,7 @@
       "position": [260, 100],
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BRIEFING_API_URL }}/briefings/run",
+        "url": "={{ $env.BRIEFING_API_URL }}/briefings/run?trigger=n8n",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $env.ADMIN_TOKEN }}" }]

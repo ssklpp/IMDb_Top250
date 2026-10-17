@@ -372,3 +372,52 @@ def test_그래프가_두_번_재개돼도_발송은_한_번():
     row = run(go())
     assert row["status"] == "sent"
     assert sender.sent == ["본문"]
+
+
+def test_KOBIS가_빈_목록을_주면_초안을_만들지_않는다():
+    """집계 전인 주를 물으면 KOBIS는 에러 대신 빈 목록을 준다(실호출로 확인한 동작). 빈 브리핑을 승인 대기에 올리지 않는다."""
+    empty = {"boxOfficeResult": {"showRange": "20261005~20261011", "weeklyBoxOfficeList": []}}
+
+    async def go():
+        tid = new_id()
+        async with App(FakeSender(), fetch=lambda target_dt: empty) as app:
+            row, _ = await app.service.run(tid, *WEEK)
+            return row, app.draft_calls
+
+    row, draft_calls = run(go())
+    assert row["status"] == "failed" and "집계 전" in row["error"]
+    assert draft_calls == 0
+
+
+def test_운영_지표():
+    """roadmap 5절 지표가 briefing_runs에서 맞게 계산되는지. 다섯 가지 결과를 하나씩 만들어 본다."""
+    async def go():
+        async with App(FakeSender()) as app:
+            async with app.pool.connection() as conn:
+                await conn.execute("DELETE FROM briefing_runs")
+        results = {}
+        for name, drafts, action in [
+            ("unedited", (GOOD_DRAFT,), "approve"),
+            ("edited", (GOOD_DRAFT,), "edit"),
+            ("rejected", (GOOD_DRAFT,), "reject"),
+            ("redrafted", (BAD_DRAFT, GOOD_DRAFT), "approve"),
+            ("validate_failed", (BAD_DRAFT,), None),
+        ]:
+            async with App(FakeSender(), drafts=drafts) as app:
+                tid = new_id()
+                await app.service.run(tid, *WEEK, trigger="n8n")
+                if action:
+                    await app.service.decide(tid, action, "고친 본문" if action == "edit" else None, "m")
+                results[name] = await app.store.get(tid)
+        async with App(FakeSender()) as app:
+            return results, await app.service.metrics()
+
+    results, m = run(go())
+    assert m["total"] == 5
+    assert m["by_status"] == {"sent": 3, "pending": 0, "rejected": 1, "expired": 0, "failed": 1}
+    assert m["approved_unedited_ratio"] == round(2 / 3, 3)  # 승인 3건 중 수정 없이 2건
+    assert m["redraft_ratio"] == round(2 / 5, 3)  # 다시 쓴 1건 + 두 번 다 걸린 1건 / 초안 단계까지 간 5건
+    assert m["validate_failed"] == 1
+    assert m["hours_to_decision_avg"] is not None and m["hours_to_decision_avg"] < 1
+    assert m["prep_seconds_avg"] is not None
+    assert results["unedited"]["trigger"] == "n8n" and results["unedited"]["llm_tokens"] == 0  # 가짜 writer는 LLM을 안 부른다

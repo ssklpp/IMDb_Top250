@@ -21,6 +21,20 @@ interface Briefing {
   created_at: string;
 }
 
+interface Metrics {
+  total: number;
+  by_status: Record<string, number>;
+  approved_unedited_ratio: number | null;
+  redraft_ratio: number | null;
+  hours_to_decision_avg: number | null;
+  hours_to_decision_max: number | null;
+  prep_seconds_avg: number | null;
+  llm_tokens_avg: number | null;
+}
+
+const pct = (v: number | null) => (v === null ? "기록 없음" : `${Math.round(v * 100)}%`);
+const num = (v: number | null, unit: string) => (v === null ? "기록 없음" : `${v}${unit}`);
+
 const TOKEN_KEY = "briefing-admin-token"; // 탭을 닫으면 사라지게 sessionStorage에 둔다
 const NAME_KEY = "briefing-admin-name";
 
@@ -55,6 +69,7 @@ export default function BriefingAdmin() {
   const [token, setToken] = useState("");
   const [name, setName] = useState("");
   const [briefings, setBriefings] = useState<Briefing[] | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -83,7 +98,9 @@ export default function BriefingAdmin() {
     if (!token) return;
     setError(null);
     try {
-      setBriefings((await call("")).briefings);
+      const [list, m] = await Promise.all([call(""), call("/metrics")]);
+      setBriefings(list.briefings);
+      setMetrics(m.metrics);
     } catch (e) {
       setBriefings(null);
       setError((e as Error).message);
@@ -172,6 +189,32 @@ export default function BriefingAdmin() {
           </div>
           {error && <p className="border-l-[3px] border-stamp pl-3 text-sm text-stamp">{error}</p>}
         </section>
+
+        {metrics && metrics.total > 0 && (
+          // 운영 지표(docs/roadmap.md 5절). 초안 품질과 만료 기준을 정하는 근거다.
+          <section className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 border-t border-line pt-4 text-sm">
+            <div>
+              <div className="text-ink-soft text-xs">수정 없이 승인</div>
+              <div className="font-semibold">{pct(metrics.approved_unedited_ratio)}</div>
+            </div>
+            <div>
+              <div className="text-ink-soft text-xs">초안 재작성</div>
+              <div className="font-semibold">{pct(metrics.redraft_ratio)}</div>
+            </div>
+            <div>
+              <div className="text-ink-soft text-xs">승인까지 평균</div>
+              <div className="font-semibold">{num(metrics.hours_to_decision_avg, "시간")}</div>
+            </div>
+            <div>
+              <div className="text-ink-soft text-xs">초안 1건 토큰</div>
+              <div className="font-semibold">{num(metrics.llm_tokens_avg, "")}</div>
+            </div>
+            <p className="col-span-full text-xs text-ink-soft">
+              전체 {metrics.total}건 중 보냄 {metrics.by_status.sent}, 거절 {metrics.by_status.rejected}, 만료{" "}
+              {metrics.by_status.expired}, 실패 {metrics.by_status.failed}
+            </p>
+          </section>
+        )}
 
         {briefings && briefings.length === 0 && (
           <p className="text-sm text-ink-soft">아직 브리핑이 없습니다. 이번 주 브리핑을 만들어 보세요.</p>
