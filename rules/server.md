@@ -92,6 +92,7 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 - **로그 이벤트** (코드에 있는 전체 목록 — 새 이벤트를 추가하면 여기도 갱신):
   - 요청: `chat.request`(rate_key_source), `chat.forbidden_direct`(비밀값 없는 직접 호출 거절), `chat.cache_hit`, `chat.tool_start`, `chat.tool_end`, `chat.sources`, `chat.done`(elapsed_s, tool_calls), `chat.timeout`, `chat.unhandled_error`
   - 서버: `startup.checkpointer_ready`, `startup.mcp_tools`(MCP_URL일 때 받은 도구 이름), `shutdown.checkpointer_closed`, `health.not_ok`, `vectorstore.cache_hit`, `vectorstore.build_start`, `vectorstore.build_done`
+  - MCP 클라이언트(`mcp_client.py`): `mcp.session_open`, `mcp.session_error`(error=타입), `mcp.reconnect`(서버 재시작 등으로 호출이 실패해 새 세션으로 다시 부름)
   - MCP 서버(`movie_mcp/server.py`): `mcp.start`(transport). 도구 이벤트(kobis·web·imdb·vectorstore)는 그 프로세스에서 같은 이름으로 찍힌다
   - KOBIS: `kobis.request`, `kobis.success`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info), `kobis.too_recent`(호출 전 차단), `kobis.empty_result`, `kobis.no_api_key`, `kobis.timeout`, `kobis.http_error`, `kobis.network_error`, `kobis.parse_error`
   - 웹 검색: `web.request`(query_len), `web.success`, `web.empty_result`, `web.no_api_key`, `web.timeout`, `web.http_error`, `web.network_error`, `web.parse_error`

@@ -145,7 +145,12 @@ JSON 그대로 비교한다. 처음 옮길 때 `kobis_search` 설명이 docstrin
   넘기지 않는다(MCP Inspector도 마찬가지였다). 벡터스토어 경로도 같은 이유로 저장소 기준 절대 경로다.
 - **로그는 stderr.** stdio 모드에서 stdout은 프로토콜 통로다.
 
-**지연** (같은 PC, 중앙값) — `imdb_sql` 3ms → 281ms, `imdb_search` 156ms → 436ms. 어댑터가 도구 호출마다
-세션을 새로 열기 때문이다(초기화 왕복 포함). 세션을 붙잡아 두면 6ms·164ms로 거의 같아지지만, 그러면 MCP
-서버가 재시작될 때 다시 붙는 로직이 필요하다. 배포(Railway)는 로컬 도구라 영향이 없어 지금은 호출마다 세션을
-연다. `docs/bug-log.md` B-013.
+**지연과 세션** (같은 PC, 중앙값) — 어댑터 기본(`get_tools()`)은 도구 호출마다 세션을 새로 열어서(초기화 왕복 포함)
+`imdb_sql` 3ms → 281ms, `imdb_search` 156ms → 436ms였다. 지금은 `mcp_client.PersistentMcpSession`이 세션 하나를 붙잡아
+두고 모든 호출이 같이 쓴다 → 12ms·169ms. `docs/bug-log.md` B-013.
+- **세션은 전용 백그라운드 태스크가 열고 닫는다.** MCP SDK 연결은 anyio 태스크 그룹이라 요청 태스크에서 열고 lifespan에서
+  닫으면 "다른 태스크에서 cancel scope를 나갔다" 에러가 난다.
+- **호출이 예외로 실패하면 새 세션으로 한 번만 다시 부른다.** 도구 자체의 실패는 예외가 아니라 isError 결과로 오므로, 예외는
+  연결 문제다(MCP 서버 재시작 등). 도구 4개는 모두 조회라 다시 불러도 안전하다 — **쓰기 도구를 추가하면 이 재시도를 다시 볼 것.**
+- 재시작 시험: compose에서 `docker compose restart mcp` 후에도 웹 질문이 이어졌다(로그 `mcp.reconnect` 1번).
+- `run_evals --mcp-url`은 여전히 호출마다 세션을 연다(평가 속도는 중요하지 않다).
