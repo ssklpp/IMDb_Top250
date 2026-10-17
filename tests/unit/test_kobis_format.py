@@ -340,3 +340,32 @@ class TestBoxofficeAvailability:
     )
     def test_조회_가능하면_None(self, st, query):
         assert boxoffice_too_recent(st, query, self.FRI) is None
+
+
+class TestBriefingWeek:
+    """브리핑 thread_id가 주마다 하나로 정해지는지. 같은 주에 두 번 시작돼도 하나로 모여야 중복 발송이 없다."""
+
+    def test_월요일이면_어제까지의_주(self):
+        from kobis_format import briefing_week
+
+        assert briefing_week(date(2026, 10, 19)) == ("briefing-2026-W42", date(2026, 10, 12), date(2026, 10, 18))
+
+    def test_같은_주_안에서는_어느_요일이든_같은_키(self):
+        """트리거가 월요일에 늦게 돌거나 화요일에 재시도해도 같은 브리핑이어야 한다."""
+        from kobis_format import briefing_week
+
+        keys = {briefing_week(date(2026, 10, d))[0] for d in range(19, 26)}
+        assert keys == {"briefing-2026-W42"}
+
+    def test_일요일에는_아직_이번_주가_집계_전(self):
+        """일요일 당일엔 그 주가 끝나지 않아 KOBIS가 주간 데이터를 주지 않는다. 지난주를 써야 한다."""
+        from kobis_format import briefing_week
+
+        assert briefing_week(date(2026, 10, 18))[0] == "briefing-2026-W41"
+
+    def test_연말은_ISO_연도를_쓴다(self):
+        """2027-01-03(일)이 속한 주는 ISO로 2026-W53이다. 달력 연도(2027)를 쓰면 키가 어긋난다."""
+        from kobis_format import briefing_week
+
+        assert briefing_week(date(2027, 1, 4))[0] == "briefing-2026-W53"
+

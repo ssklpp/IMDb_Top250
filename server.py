@@ -4,7 +4,7 @@ import json
 import os
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
@@ -19,12 +19,15 @@ from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from agent import CHECKPOINT_DB_PATH, build_agent
+from agent import CHECKPOINT_DB_PATH, build_agent, local_tools
+from briefing.api import router as briefing_router
+from briefing.graph import BriefingService, LogSender, build_graph
+from briefing.store import BriefingStore
 from movie_tools import imdb
 from kobis_format import format_date_context, today_kst
 from logging_config import configure_logging, get_logger, request_id_var, session_id_var
 from ratelimit import from_proxy, rate_limit_key
-from sources import extract_sources
+from sources import as_text, extract_sources
 
 configure_logging()
 log = get_logger("server")
@@ -41,49 +44,96 @@ MAX_SESSION_ID_CHARS = 64
 MCP_URL = os.environ.get("MCP_URL", "").strip()
 EXPECTED_TOOLS = {"imdb_search", "imdb_sql", "kobis_search", "web_search"}
 
+# 있으면 대화 체크포인트와 브리핑을 Postgres에 둔다(compose). 없으면 SQLite이고 브리핑은 꺼진다(Railway).
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+# 승인을 기다리는 브리핑이 이 시간을 넘기면 만료돼 발송되지 않는다.
+BRIEFING_APPROVAL_TTL_HOURS = float(os.environ.get("BRIEFING_APPROVAL_TTL_HOURS", "48"))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """SQLite 체크포인터 연결을 앱 생명주기에 묶는다.
+    """체크포인터·MCP 세션·브리핑을 앱 생명주기에 묶는다. 닫는 순서는 연 순서의 반대(AsyncExitStack).
 
-    AsyncSqliteSaver를 쓰는 이유: 이 서버는 astream_events(async)로 실행되는데
-    동기 SqliteSaver는 aput/aget_tuple에서 NotImplementedError를 던진다.
-    파일 기반이라 프로세스가 재시작돼도 사용자 대화가 유지된다.
+    체크포인터는 DATABASE_URL이 있으면 Postgres, 없으면 SQLite 파일이다. 둘 다 async 세이버를 쓴다 —
+    이 서버는 astream_events(async)로 실행되는데 동기 세이버는 aput/aget_tuple에서 NotImplementedError를 던진다.
+    Postgres를 쓰는 건 지금은 compose뿐이다. Railway는 SQLite이고 브리핑이 꺼져 있다.
     """
-    Path(CHECKPOINT_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = await aiosqlite.connect(CHECKPOINT_DB_PATH)
-    saver = AsyncSqliteSaver(conn)
-    await saver.setup()
-    log.info("startup.checkpointer_ready", db=CHECKPOINT_DB_PATH)
+    async with AsyncExitStack() as stack:
+        pool = None
+        if DATABASE_URL:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from psycopg.rows import dict_row
+            from psycopg_pool import AsyncConnectionPool
 
-    mcp_session = None
-    if MCP_URL:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
-        from langchain_mcp_adapters.tools import load_mcp_tools
+            # 연결 옵션은 AsyncPostgresSaver.from_conn_string과 같다. autocommit이 없으면 setup()의
+            # 테이블 생성이 커밋되지 않고, prepare_threshold=0이 없으면 풀에서 prepared statement가 충돌한다.
+            pool = AsyncConnectionPool(
+                DATABASE_URL,
+                open=False,
+                max_size=10,
+                kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+            )
+            await pool.open(wait=True, timeout=30)
+            stack.push_async_callback(pool.close)
+            saver = AsyncPostgresSaver(pool)
+            await saver.setup()
+            log.info("startup.checkpointer_ready", db="postgres")
+        else:
+            Path(CHECKPOINT_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+            conn = await aiosqlite.connect(CHECKPOINT_DB_PATH)
+            stack.push_async_callback(conn.close)
+            saver = AsyncSqliteSaver(conn)
+            await saver.setup()
+            log.info("startup.checkpointer_ready", db=CHECKPOINT_DB_PATH)
 
-        from mcp_client import PersistentMcpSession
+        if MCP_URL:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+            from langchain_mcp_adapters.tools import load_mcp_tools
 
-        # 세션 하나를 붙잡아 두고 모든 도구 호출이 같이 쓴다. 어댑터 기본(get_tools)은 호출마다 세션을
-        # 새로 열어 도구당 약 280ms가 더 걸렸다(B-013). 서버가 재시작되면 PersistentMcpSession이 다시 붙는다.
-        client = MultiServerMCPClient({"movie": {"transport": "streamable_http", "url": MCP_URL}})
-        mcp_session = PersistentMcpSession(client, "movie")
-        await mcp_session.start()
-        tools = await load_mcp_tools(mcp_session, server_name="movie")
-        log.info("startup.mcp_tools", url=MCP_URL, tools=sorted(t.name for t in tools))
-    else:
-        tools = None  # build_agent가 local_tools()로 벡터스토어까지 불러온다
-    app.state.tool_names = sorted(t.name for t in tools) if tools else sorted(EXPECTED_TOOLS)
-    app.state.agent = build_agent(saver, tools=tools)
-    try:
+            from mcp_client import PersistentMcpSession
+
+            # 세션 하나를 붙잡아 두고 모든 도구 호출이 같이 쓴다. 어댑터 기본(get_tools)은 호출마다 세션을
+            # 새로 열어 도구당 약 280ms가 더 걸렸다(B-013). 서버가 재시작되면 PersistentMcpSession이 다시 붙는다.
+            client = MultiServerMCPClient({"movie": {"transport": "streamable_http", "url": MCP_URL}})
+            mcp_session = PersistentMcpSession(client, "movie")
+            await mcp_session.start()
+            stack.push_async_callback(mcp_session.close)
+            tools = await load_mcp_tools(mcp_session, server_name="movie")
+            log.info("startup.mcp_tools", url=MCP_URL, tools=sorted(t.name for t in tools))
+        else:
+            tools = local_tools()  # 벡터스토어를 이때 불러온다(없으면 임베딩)
+        app.state.tool_names = sorted(t.name for t in tools)
+        app.state.agent = build_agent(saver, tools=tools)
+
+        app.state.briefing = None
+        if pool is not None:
+            app.state.briefing = await _build_briefing(pool, saver, tools)
+
         yield
-    finally:
-        if mcp_session is not None:
-            await mcp_session.close()
-        await conn.close()
-        log.info("shutdown.checkpointer_closed")
+    log.info("shutdown.checkpointer_closed")
+
+
+async def _build_briefing(pool, saver, tools) -> BriefingService:
+    """브리핑 그래프. 초안은 에이전트와 같은 kobis_search 도구로 만든다 — compose에서는 MCP 도구라
+    이 컨테이너에 KOBIS 키가 없어도 된다."""
+    store = BriefingStore(pool)
+    await store.setup()
+    kobis_tool = next(t for t in tools if t.name == "kobis_search")
+
+    async def draft_fn(week_start: str, week_end: str) -> str:
+        out = await kobis_tool.ainvoke({"query": week_end.replace("-", ""), "search_type": "weekly"})
+        text = as_text(getattr(out, "content", out)) or ""
+        if text.startswith("[TOOL_ERROR"):
+            return text
+        return f"주간 박스오피스 브리핑 ({week_start} ~ {week_end})\n\n{text}"
+
+    graph = build_graph(saver, store, draft_fn, LogSender())
+    log.info("startup.briefing_ready")
+    return BriefingService(graph, store, BRIEFING_APPROVAL_TTL_HOURS)
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(briefing_router)
 
 _cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
 

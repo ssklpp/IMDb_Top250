@@ -21,9 +21,9 @@ ENV PATH=/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 COPY --from=deps /venv /venv
-COPY *.py imdb_top250.csv ./
-COPY movie_tools ./movie_tools
-COPY movie_mcp ./movie_mcp
+# 폴더를 하나씩 나열하지 않고 전부 복사한다. 뺄 것은 api.Dockerfile.dockerignore가 정한다.
+# 예전에는 COPY를 나열해서, 새 패키지(briefing/)를 만들 때 COPY를 빠뜨려 컨테이너에서만 ImportError가 났다(B-017).
+COPY . .
 
 # vectorstore/에 FAISS 인덱스와 대화 DB(checkpoints.sqlite)가 생긴다. compose가 named volume을
 # 여기 붙인다. 디렉터리를 미리 만들어 소유자를 정해 두면 새 볼륨이 그 소유자로 초기화된다.

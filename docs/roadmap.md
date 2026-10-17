@@ -200,12 +200,21 @@ def request_approval(state: BriefingState) -> dict:
 | `decided_by`, `decided_at` | 누가 언제 승인했나 |
 | `sent_at`, `delivery_id` | 발송 시각과 채널 쪽 메시지 ID |
 
+### 구현하며 바뀐 점
+
+- **Postgres는 compose에만** 붙였다(사용자 결정). `DATABASE_URL`이 있으면 Postgres, 없으면 SQLite. Railway는
+  SQLite이고 브리핑은 꺼져 있다(503). 나중에 Railway에 Postgres를 추가하면 환경변수 하나로 바뀐다.
+- 발송은 아직 기록만 한다(`LogSender`). 초안은 KOBIS 주간 원문. LLM 작성·검증·Discord는 4단계.
+- 승인 화면은 계획대로 `/admin/briefings`. 관리자 토큰은 브라우저 탭 세션에만 두고 서버에 저장하지 않는다.
+- `psycopg-binary`를 직접 적었다. `psycopg[binary]`의 extra는 락 생성기가 따라가지 않는다.
+- Postgres 세이버는 3.0.4(3.0.5부터 `langgraph-checkpoint` 고정과 충돌).
+
 ### 완료 기준
 
-- [ ] 승인 대기 중에 `api` 컨테이너를 재시작해도 승인 후 정상 발송된다
-- [ ] 같은 승인 요청을 두 번 보내도 한 번만 발송된다
-- [ ] 거절·만료된 브리핑은 발송되지 않고 기록만 남는다
-- [ ] 위 세 경우가 실제 Postgres를 쓰는 통합 테스트로 검증된다
+- [x] 승인 대기 중에 `api` 컨테이너를 재시작해도 승인 후 정상 발송된다 — compose에서 `restart api` 후 웹으로 승인, `sent`
+- [x] 같은 승인 요청을 두 번 보내도 한 번만 발송된다 — 두 번째는 409, 동시 승인·그래프 이중 재개도 1회
+- [x] 거절·만료된 브리핑은 발송되지 않고 기록만 남는다
+- [x] 위 세 경우가 실제 Postgres를 쓰는 통합 테스트로 검증된다 — `tests/integration/` 10개, CI `deps` 잡
 
 ---
 

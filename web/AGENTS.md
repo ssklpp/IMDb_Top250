@@ -43,6 +43,16 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## 마크다운 렌더링
 에이전트 답변은 `react-markdown`으로 렌더링됩니다. `components` prop으로 Tailwind 클래스를 직접 지정합니다. 지원 요소: `p`, `ul`, `ol`, `li`, `strong`, `h1`–`h3`, `code`(인라인), `blockquote`, `hr`.
 
+## 브리핑 승인 화면 (`/admin/briefings`)
+주간 박스오피스 브리핑 초안을 보고 승인·수정·거절하는 관리자 화면(`app/admin/briefings/page.tsx`). 디자인 토큰은 챗봇 화면과 같다.
+
+- 백엔드 `/briefings`를 `app/api/admin/briefings/[[...path]]/route.ts`가 프록시한다. **허용 경로만**(`""`·`run`·`<id>`·`<id>/decision`) 넘긴다.
+- 관리자 토큰은 사용자가 입력하고 `sessionStorage`에만 둔다(탭을 닫으면 사라짐). 브라우저 → 프록시는 `x-admin-token`,
+  프록시 → 백엔드는 `Authorization: Bearer`. 토큰을 서버 환경변수로 두지 않는다 — 그러면 아무나 화면에서 승인할 수 있다.
+- Next 16의 동적 경로 `params`는 `Promise`다(`await params`).
+- 승인자 이름은 `localStorage`. 이름 없이는 승인·거절 버튼이 꺼진다(누가 결정했는지 남기기 위해).
+- Postgres가 없는 백엔드(Railway)는 503 `BRIEFING_DISABLED`를 주고 화면은 그 메시지를 그대로 보여준다.
+
 ## 프론트엔드 프록시 에러 (route.ts)
 `web/app/api/chat/route.ts`는 백엔드 호출 결과를 JSON 에러로 변환합니다:
 - 빈 질문 → 400 `{code: "EMPTY_QUESTION"}`

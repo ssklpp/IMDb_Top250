@@ -1,6 +1,7 @@
 # 로컬 원클릭 실행: cp .env.example .env → 키 입력 → docker compose up -d --build --wait → http://localhost:3000
 #
-#   web (3000, 밖으로 열림) → api (8000, 에이전트) → mcp (8001, 영화 데이터 도구 4개)
+#   web (3000, 밖으로 열림) → api (8000, 에이전트·브리핑 승인) → mcp (8001, 영화 데이터 도구 4개)
+#                                     └→ postgres (대화 체크포인트·브리핑 상태)
 #
 # 브라우저는 web만 본다. web/app/api/chat/route.ts가 서버 쪽에서 BACKEND_URL로 프록시하므로
 # api·mcp 포트는 밖으로 열지 않는다(CORS 설정도 필요 없다).
@@ -13,6 +14,21 @@
 name: movie-chatbot
 
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      # compose 내부 네트워크에서만 쓰고 포트를 밖으로 열지 않는다.
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: movies
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d movies"]
+      interval: 2s
+      retries: 30
+    restart: unless-stopped
+
   mcp:
     build: &app-build
       context: .
@@ -44,17 +60,20 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       MCP_URL: http://mcp:8001/mcp
+      # 대화 체크포인트와 브리핑 상태를 Postgres에. 승인 대기 중에 api가 재시작돼도 이어진다.
+      DATABASE_URL: postgresql://app:app@postgres:5432/movies
+      # 브리핑 승인 API(/briefings)의 관리자 토큰. 없으면 승인 API가 503.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
       LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
-    volumes:
-      # 대화 DB(checkpoints.sqlite). down 후 다시 올려도 대화가 이어진다.
-      - chat_db:/app/vectorstore
     depends_on:
       # 기동할 때 MCP 서버에서 도구 목록을 받으므로 mcp가 먼저 준비돼야 한다.
       mcp:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       # /health는 에이전트·OpenAI 키·MCP 도구 4개가 준비돼야 200이다(server.py).
@@ -78,4 +97,4 @@ services:
 
 volumes:
   movie_index:
-  chat_db:
+  pg_data:

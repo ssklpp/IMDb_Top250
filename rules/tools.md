@@ -131,7 +131,7 @@ JSON 그대로 비교한다. 처음 옮길 때 `kobis_search` 설명이 docstrin
 
 **MCP를 거치면 결과 형태가 달라진다** (`langchain-mcp-adapters` 0.3.0)
 - `ToolMessage.content`가 문자열이 아니라 블록 목록(`[{"type": "text", "text": …}]`)이다. `sources.py`는
-  읽기 전에 `_as_text()`로 문자열로 만든다. 안 그러면 웹 출처가 사라지고 에러 응답에도 고정 출처가 붙는다.
+  읽기 전에 `as_text()`로 문자열로 만든다. 안 그러면 웹 출처가 사라지고 에러 응답에도 고정 출처가 붙는다.
 - `imdb_search`의 artifact는 `list[Document]`가 아니라 `{"structured_content": {"movies": [{rank, title, year}]}}`다.
   서버가 `CallToolResult(content=본문, structuredContent=영화 목록)`으로 보낸다 — 모델은 본문만 본다.
 - 인자 검증 실패는 `isError` 결과 → `status="error"` ToolMessage로 모델에 간다(로컬의 ValidationError와 같은 동작).

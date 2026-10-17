@@ -16,3 +16,13 @@ docs
 rules
 scripts
 tests
+# 이미지에 필요 없는 것. 위 목록과 합쳐 COPY . .에서 빠진다.
+*.md
+requirements-dev.txt
+railway.toml
+docker-compose.yml
+docker
+.dockerignore
+.gitignore
+.python-version
+node_modules
