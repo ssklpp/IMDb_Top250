@@ -2,6 +2,7 @@
 
     POST /briefings/run                   이번 주 브리핑 시작(이미 있으면 기존 상태)
     GET  /briefings                       최근 목록(승인 대기 만료 처리 포함)
+    GET  /briefings/metrics               운영 지표(수정 없이 승인된 비율, 재작성률, 승인까지 시간, 토큰·시간)
     GET  /briefings/{thread_id}
     POST /briefings/{thread_id}/decision  {"action": "approve"|"edit"|"reject", "text": 수정본, "by": 이름}
 """
@@ -48,15 +49,21 @@ def _public(row: dict | None) -> dict | None:
 
 
 @router.post("/run", dependencies=[Depends(_require_admin)])
-async def run(service: BriefingService = Depends(_service)):
+async def run(trigger: Literal["manual", "n8n"] = "manual", service: BriefingService = Depends(_service)):
     thread_id, monday, sunday = briefing_week(today_kst())
-    row, created = await service.run(thread_id, monday, sunday)
+    row, created = await service.run(thread_id, monday, sunday, trigger)
     return {"created": created, "briefing": _public(row)}
 
 
 @router.get("", dependencies=[Depends(_require_admin)])
 async def list_briefings(service: BriefingService = Depends(_service)):
     return {"briefings": [_public(r) for r in await service.list_recent()]}
+
+
+@router.get("/metrics", dependencies=[Depends(_require_admin)])
+async def metrics(service: BriefingService = Depends(_service)):
+    """운영 지표. /{thread_id}보다 먼저 등록해야 "metrics"가 thread_id로 잡히지 않는다."""
+    return {"metrics": await service.metrics()}
 
 
 @router.get("/{thread_id}", dependencies=[Depends(_require_admin)])

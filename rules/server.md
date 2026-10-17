@@ -111,6 +111,11 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
   - **실패한 주는 다시 트리거하면 처음부터 다시 돈다**(월요일 아침 KOBIS 집계가 늦을 때). 승인 대기·발송된 주는 그대로.
 - **발송**: `DISCORD_WEBHOOK_URL`이 있으면 Discord(`briefing/discord.py`), 없으면 기록만(`LogSender`). 멘션은 막는다
   (`allowed_mentions`). 웹훅 URL에 토큰이 있으므로 로그에 남기지 않는다. 승인 요청 알림은 `DISCORD_REVIEW_WEBHOOK_URL`.
+- **운영 지표**: `GET /briefings/metrics`(관리자 화면 위쪽) — 수정 없이 승인된 비율, 초안 재작성률, 승인까지 시간, 초안 1건의
+  시간·LLM 토큰. 토큰은 그래프 실행에 `UsageMetadataCallbackHandler`를 붙여 센다. `/metrics`는 `/{thread_id}`보다 **먼저**
+  등록해야 한다(아니면 "metrics"가 thread_id로 잡힌다).
+- **LangSmith**: 실행 이름 `weekly_briefing`, 태그 `briefing`, 메타데이터 `thread_id`·`trigger`(manual·n8n·approval)·`week`.
+  `POST /briefings/run?trigger=n8n`으로 누가 시작했는지 남긴다.
 - **트리거**: n8n(`docker compose --profile automation up`, `automation/n8n/weekly-briefing.json`). 월요일 10시·15시에
   `POST /briefings/run`, 응답이 200이 아니거나 `failed`면 리뷰 웹훅으로 알린다. 수동 실행:
   `docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id WeeklyBriefing01`

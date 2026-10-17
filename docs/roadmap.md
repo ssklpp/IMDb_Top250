@@ -319,6 +319,21 @@ n8n은 시각에 맞춰 `POST /briefings/run`을 호출하고 실패 응답이�
 
 브리핑 그래프 실행에는 `thread_id`, `trigger=n8n|manual`, `week` 메타데이터를 단다.
 
+### 구현 결과 (2026-10-17)
+
+| 항목 | 어디서 |
+| --- | --- |
+| MCP 동등성 | `run_evals --mcp-url` — 로컬·MCP 모두 18/18(2단계) |
+| 브리핑 날짜 | `report.check_period` + `kobis_format.briefing_week` 단위 테스트, 기간이 다르면 `failed`(통합 테스트) |
+| 브리핑 숫자 | `tests/fixtures`의 실제 KOBIS 응답으로 직접 계산한 값이 KOBIS의 `rankInten`·`audiChange`와 같은지(단위) |
+| 신규 진입 표시 | 같은 고정 입력. 신작(`NEW`)과 순위권 진입(전주 10위 밖)을 구분 |
+| 집계 전 처리 | KOBIS가 빈 목록을 주면 초안을 만들지 않음(통합), 대상 주는 항상 집계가 끝난 주(단위) |
+| 초안 품질(LLM) | `python -m tests.evals.run_briefing` — 검사 통과율(과금, 수동) |
+
+운영 지표는 `GET /briefings/metrics`와 관리자 화면 위쪽에 보인다. `briefing_runs`에 `pending_at`·`trigger`·`prep_seconds`·
+`llm_tokens`를 더했다. 첫 실측: 초안까지 4.46초, 1,369토큰, LangSmith 비용 약 $0.002/건. LangSmith 트레이스는
+`weekly_briefing` 이름과 `briefing` 태그로 찾고, 승인으로 재개한 실행은 `trigger=approval`이다.
+
 ---
 
 ## 일정과 위험 요소

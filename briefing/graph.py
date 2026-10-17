@@ -11,11 +11,13 @@ interrupt 동작에서 지킬 것 — interrupt()를 부른 노드는 재개될 
 request_approval 안에는 interrupt() 앞에 부작용(발송·알림·DB 쓰기)을 두지 않는다. 알림·발송은 각자 다른 노드다.
 """
 
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import date, timedelta
 from typing import Protocol, TypedDict
 
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
@@ -186,23 +188,40 @@ class BriefingService:
         self.ttl = approval_ttl_hours
 
     @staticmethod
-    def _config(thread_id: str) -> dict:
-        return {"configurable": {"thread_id": thread_id}}
+    def _config(thread_id: str, **metadata) -> dict:
+        # LangSmith 트레이스에서 브리핑 실행을 찾고 거를 수 있게 이름·태그·메타데이터를 단다(roadmap 5절).
+        return {
+            "configurable": {"thread_id": thread_id},
+            "run_name": "weekly_briefing",
+            "tags": ["briefing"],
+            "metadata": {"thread_id": thread_id, **metadata},
+        }
 
-    async def run(self, thread_id: str, week_start, week_end) -> tuple[dict, bool]:
+    async def run(self, thread_id: str, week_start, week_end, trigger: str = "manual") -> tuple[dict, bool]:
         """이번 주 브리핑을 시작한다. 이미 있으면 새로 시작하지 않고 기존 상태를 준다(멱등)."""
         created = await self.store.create_if_absent(thread_id, week_start, week_end)
         # 실패한 주는 다시 트리거하면 처음부터 다시 돈다(월요일 아침 KOBIS 집계가 늦었을 때). 승인 대기·발송된 건은 그대로.
         retried = not created and await self.store.reset_failed(thread_id)
         if created or retried:
-            log.info("briefing.start", thread_id=thread_id, retry=retried)
+            log.info("briefing.start", thread_id=thread_id, retry=retried, trigger=trigger)
+            usage = UsageMetadataCallbackHandler()
+            config = self._config(thread_id, trigger=trigger, week=f"{week_start}~{week_end}")
+            config["callbacks"] = [usage]
+            started = time.monotonic()
             await self.graph.ainvoke(
                 # 같은 thread를 다시 돌리면 이전 실행의 상태가 남아 있으므로 시도 횟수 등을 명시적으로 비운다.
                 {"thread_id": thread_id, "week_start": str(week_start), "week_end": str(week_end),
                  "attempts": 0, "problems": [], "failed": False, "decision": ""},
-                self._config(thread_id),
+                config,
             )
+            # 초안까지(승인 대기 또는 실패) 걸린 시간과 LLM 토큰. 토큰 × 모델 단가 = 브리핑 1건당 비용.
+            tokens = sum(u.get("total_tokens", 0) for u in usage.usage_metadata.values())
+            await self.store.record_run(thread_id, trigger, round(time.monotonic() - started, 2), tokens)
         return await self.store.get(thread_id), created
+
+    async def metrics(self) -> dict:
+        await self.store.expire_stale(self.ttl)
+        return await self.store.metrics()
 
     async def list_recent(self) -> list[dict]:
         await self.store.expire_stale(self.ttl)
@@ -235,7 +254,7 @@ class BriefingService:
             log.info("briefing.resume_retry", thread_id=thread_id)
             action = "approve" if current["status"] == "approved" else "reject"
         log.info("briefing.decided", thread_id=thread_id, action=action)
-        await self.graph.ainvoke(Command(resume=action), self._config(thread_id))
+        await self.graph.ainvoke(Command(resume=action), self._config(thread_id, trigger="approval", action=action))
         return await self.store.get(thread_id)
 
     async def _waiting(self, thread_id: str) -> bool:
