@@ -200,3 +200,18 @@ def test_KOBIS_주간_원본은_도구가_아니라_리소스다(monkeypatch):
     assert _json.loads(result.contents[0].text)["boxOfficeResult"]["showRange"] == "20261005~20261011"
     assert asked == ["20261011"]
     assert len(tools) == 4
+
+
+def test_KOBIS_로그에_영화_제목_원문을_남기지_않는다(monkeypatch):
+    """CLAUDE.md 규칙: 사용자 질문에서 나온 검색어는 길이만 남긴다. kobis.request가 제목을 그대로 남기고 있었다
+    (저장소 지도가 10월 2일에 지적했는데 버그 기록에도 안 올라가 방치됨, B-020). 박스오피스 날짜는 사용자 문장이 아니라 남긴다."""
+    from structlog.testing import capture_logs
+
+    monkeypatch.setenv("KOBIS_API_KEY", "test-key")
+    monkeypatch.setattr(kobis, "_search_movie_list", lambda *a, **k: [])
+    with capture_logs() as logs:
+        kobis.kobis_search("아주 사적인 제목", search_type="movie")
+        kobis.kobis_search("아주 사적인 제목", search_type="detail")
+    assert logs, "로그가 하나도 안 잡혔다"
+    assert all("아주 사적인 제목" not in str(entry) for entry in logs)
+    assert any(entry.get("query_len") == len("아주 사적인 제목") for entry in logs)

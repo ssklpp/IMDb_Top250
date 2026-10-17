@@ -97,6 +97,14 @@ class KobisInput(BaseModel):
 
 
 
+def _query_log(search_type: str, query: str) -> dict:
+    """로그에 남길 검색어 필드. 영화 제목은 사용자 질문에서 나오므로 길이만 남긴다(CLAUDE.md 코드 규칙).
+    박스오피스 모드의 query는 YYYYMMDD 날짜라 사용자 문장이 아니고, 집계 전 차단을 추적하려면 값이 필요해 그대로 둔다."""
+    if search_type in BOXOFFICE_TYPES:
+        return {"query": query}
+    return {"query_len": len(query)}
+
+
 @retry(
     retry=retry_if_exception_type(requests.RequestException),
     stop=stop_after_attempt(KOBIS_MAX_ATTEMPTS),
@@ -161,7 +169,7 @@ def kobis_search(
     log.info(
         "kobis.request",
         search_type=search_type,
-        query=query,
+        **_query_log(search_type, query),
         open_start=open_start_dt or None,
         open_end=open_end_dt or None,
     )
@@ -221,7 +229,7 @@ def kobis_search(
                     log.info(
                         "kobis.movie_not_found",
                         search_type=search_type,
-                        query=query,
+                        **_query_log(search_type, query),
                         stage="list",
                     )
                     return tool_error(
@@ -234,7 +242,7 @@ def kobis_search(
                 movie_cd = picked.get("movieCd", "")
                 log.info(
                     "kobis.detail_resolve",
-                    query=query,
+                    **_query_log(search_type, query),
                     candidates=len(movies),
                     movie_cd=movie_cd,
                     movie_nm=picked.get("movieNm"),
@@ -262,7 +270,7 @@ def kobis_search(
                 log.info(
                     "kobis.movie_not_found",
                     search_type=search_type,
-                    query=query,
+                    **_query_log(search_type, query),
                     movie_cd=movie_cd,
                     stage="info",
                 )
@@ -280,7 +288,7 @@ def kobis_search(
         else:  # movie list
             movies = _search_movie_list(api_key, query, open_start_dt, open_end_dt)
             if not movies:
-                log.info("kobis.empty_result", search_type=search_type, query=query)
+                log.info("kobis.empty_result", search_type=search_type, **_query_log(search_type, query))
                 return f"'{query}'에 대한 KOBIS 검색 결과가 없습니다."
 
             lines = [f"KOBIS 영화 검색 결과: '{query}'\n"]
