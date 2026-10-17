@@ -86,3 +86,7 @@ class PersistentMcpSession:
 
     async def call_tool(self, *args, **kwargs):
         return await self._with_retry("call_tool", *args, **kwargs)
+
+    async def read_resource(self, *args, **kwargs):
+        """브리핑이 KOBIS 원본(kobis://weekly/…)을 읽을 때 쓴다. 도구 호출과 같은 세션·재연결."""
+        return await self._with_retry("read_resource", *args, **kwargs)

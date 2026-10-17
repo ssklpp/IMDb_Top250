@@ -179,6 +179,39 @@ def latest_boxoffice_date(search_type: str, today: date) -> date:
     return today - timedelta(days=today.weekday() + 1)  # 직전 일요일
 
 
+def parse_weekly(raw) -> dict | None:
+    """KOBIS 주간 박스오피스 응답 → 브리핑에 쓰는 구조. 형태가 다르거나 목록이 비면 None.
+
+    {"start": "2026-10-05", "end": "2026-10-11", "items": [{rank, movie_cd, title, audience, audience_acc,
+     open_date, kobis_rank_change, new_release}]}
+
+    kobis_rank_change(rankInten)·new_release(rankOldAndNew == "NEW")는 KOBIS가 직접 준 값이다. 브리핑은 전주와의
+    비교를 직접 계산하고(briefing/report.compare), 이 값과 맞는지는 테스트가 본다. new_release는 "개봉 첫 주"라는
+    뜻이라 "전주 10위 밖에서 들어옴"과 다르다(룩백: OLD인데 61위 → 6위).
+    """
+    try:
+        result = raw["boxOfficeResult"]
+        start, end = result["showRange"].split("~")
+        items = [
+            {
+                "rank": int(m["rank"]),
+                "movie_cd": m["movieCd"],
+                "title": m["movieNm"],
+                "audience": int(m["audiCnt"]),
+                "audience_acc": int(m["audiAcc"]),
+                "open_date": m.get("openDt") or "",
+                "kobis_rank_change": int(m.get("rankInten") or 0),
+                "new_release": m.get("rankOldAndNew") == "NEW",
+            }
+            for m in result["weeklyBoxOfficeList"]
+        ]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    if not items:
+        return None
+    return {"start": fmt_date(start), "end": fmt_date(end), "items": sorted(items, key=lambda x: x["rank"])}
+
+
 def briefing_week(today: date) -> tuple[str, date, date]:
     """주간 브리핑 대상 주. (thread_id, 월요일, 일요일)을 준다.
 

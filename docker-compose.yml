@@ -64,6 +64,11 @@ services:
       DATABASE_URL: postgresql://app:app@postgres:5432/movies
       # 브리핑 승인 API(/briefings)의 관리자 토큰. 없으면 승인 API가 503.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # 승인된 브리핑을 보낼 Discord 웹훅. 없으면 보내지 않고 기록만 한다.
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      # 승인 요청·실패 알림용 웹훅(브리핑 채널과 따로 두면 좋다). 없으면 알리지 않는다.
+      DISCORD_REVIEW_WEBHOOK_URL: ${DISCORD_REVIEW_WEBHOOK_URL:-}
+      ADMIN_URL: ${ADMIN_URL:-http://localhost:3000/admin/briefings}
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
       LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
@@ -95,6 +100,35 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # 주간 브리핑 트리거. `docker compose --profile automation up`일 때만 뜬다.
+  # 시각에 맞춰 api의 /briefings/run을 부르고 실패하면 알리기만 한다. 에이전트 실행·승인 대기·발송·중복 방지는
+  # 전부 api가 맡는다 — 트리거를 GitHub Actions cron 등으로 바꿔도 HTTP 호출 하나만 옮기면 된다.
+  n8n:
+    image: n8nio/n8n:2.43.7
+    profiles: [automation]
+    # 기동할 때마다 저장소의 워크플로를 가져와 켠다. 화면에서 고친 내용은 다음 기동 때 덮어써지므로
+    # 바꾸려면 automation/n8n/weekly-briefing.json을 고친다(저장소가 단일 출처).
+    entrypoint: ["sh", "-c", "n8n import:workflow --input=/workflows/weekly-briefing.json && n8n publish:workflow --id=WeeklyBriefing01 && exec n8n start"]
+    environment:
+      GENERIC_TIMEZONE: Asia/Seoul
+      TZ: Asia/Seoul
+      # 워크플로가 $env로 아래 값을 읽는다(n8n 2.x는 기본으로 막혀 있다).
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      BRIEFING_API_URL: http://api:8000
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      DISCORD_REVIEW_WEBHOOK_URL: ${DISCORD_REVIEW_WEBHOOK_URL:-}
+      N8N_SECURE_COOKIE: "false"  # 로컬 http로 화면을 열기 위해
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./automation/n8n:/workflows:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   movie_index:
   pg_data:
+  n8n_data:

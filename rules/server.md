@@ -100,8 +100,21 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 - **interrupt 노드에는 부작용을 두지 않는다.** 재개되면 그 노드가 처음부터 다시 돈다. 초안 생성·발송은 다른 노드다.
 - **만료**: 승인 대기가 `BRIEFING_APPROVAL_TTL_HOURS`(기본 48)를 넘기면 `expired`, 승인해도 보내지 않는다.
 - **결정은 기록했는데 재개 전에 죽은 경우**: 같은 결정을 다시 보내면 재개만 한다(`briefing.resume_retry`).
-- 초안은 에이전트와 **같은 `kobis_search` 도구**로 만든다(compose에서는 MCP라 api에 KOBIS 키가 없어도 된다).
-  3단계 초안은 KOBIS 원문이고 발송은 기록만 한다(`LogSender`). LLM 작성·검증·Discord는 4단계.
+- **그래프(4단계)**: `fetch_boxoffice → compare_prev → draft ⇄ validate → notify_reviewer → request_approval → deliver`.
+  - KOBIS 원본은 **MCP 리소스** `kobis://weekly/{YYYYMMDD}`로 받는다(MCP가 없으면 같은 함수를 직접). 도구로 만들면 에이전트의
+    도구 목록이 바뀌어 챗봇 평가가 흔들린다. 전주도 받아 `briefing/report.compare`가 순위·관객 변동을 직접 계산한다 —
+    두 주 모두 10위 안이면 KOBIS의 `rankInten`·`audiChange`와 같아야 한다(단위 테스트).
+  - **숫자는 모델이 쓰지 않는다.** LLM(`briefing/writer.py`, 구조화 출력)은 헤드라인·코멘트·요약만 쓰고, 표는
+    `report.render`가 원자료로 찍는다. `validate_draft`가 모델 글의 숫자·없는 순위·틀린 제목·'주말' 같은 단위 오류를 막는다.
+    걸리면 문제를 알려 한 번 더 쓰고(`draft_attempts`), 그래도 걸리면 `failed` — 발송되지 않는다.
+  - 집계 기간이 대상 주와 다르면 `failed`(1년 전 데이터를 '지난 주'라고 답한 버그의 재발 방지).
+  - **실패한 주는 다시 트리거하면 처음부터 다시 돈다**(월요일 아침 KOBIS 집계가 늦을 때). 승인 대기·발송된 주는 그대로.
+- **발송**: `DISCORD_WEBHOOK_URL`이 있으면 Discord(`briefing/discord.py`), 없으면 기록만(`LogSender`). 멘션은 막는다
+  (`allowed_mentions`). 웹훅 URL에 토큰이 있으므로 로그에 남기지 않는다. 승인 요청 알림은 `DISCORD_REVIEW_WEBHOOK_URL`.
+- **트리거**: n8n(`docker compose --profile automation up`, `automation/n8n/weekly-briefing.json`). 월요일 10시·15시에
+  `POST /briefings/run`, 응답이 200이 아니거나 `failed`면 리뷰 웹훅으로 알린다. 수동 실행:
+  `docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id WeeklyBriefing01`
+  (포트를 바꾸지 않으면 실행 중인 서버와 task broker 포트가 겹친다).
 - 통합 테스트는 실제 Postgres로 돈다(`tests/integration/`, CI `deps` 잡의 서비스 컨테이너).
 - **Windows에서 직접 띄울 때**: psycopg async는 Windows 기본 이벤트 루프(Proactor)에서 돌지 않는다. Postgres를 쓸 때는
   compose(리눅스)로 띄운다. 테스트는 `SelectorEventLoop`로 돈다.
@@ -115,7 +128,8 @@ LLM이 다른 도구로 우회하므로 서비스는 계속 동작합니다. 여
 - **로그 이벤트** (코드에 있는 전체 목록 — 새 이벤트를 추가하면 여기도 갱신):
   - 요청: `chat.request`(rate_key_source), `chat.forbidden_direct`(비밀값 없는 직접 호출 거절), `chat.cache_hit`, `chat.tool_start`, `chat.tool_end`, `chat.sources`, `chat.done`(elapsed_s, tool_calls), `chat.timeout`, `chat.unhandled_error`
   - 서버: `startup.checkpointer_ready`(db=postgres 또는 SQLite 경로), `startup.mcp_tools`(MCP_URL일 때 받은 도구 이름), `shutdown.checkpointer_closed`, `health.not_ok`, `vectorstore.cache_hit`, `vectorstore.build_start`, `vectorstore.build_done`
-  - 브리핑: `startup.briefing_ready`, `briefing.start`, `briefing.pending`, `briefing.draft_failed`, `briefing.decided`, `briefing.resume_retry`, `briefing.send_skipped`(이미 다른 실행이 보냄), `briefing.sent`(chars·delivery_id), `briefing.send_failed`
+  - 브리핑: `startup.briefing_ready`(channel·review_notice), `briefing.start`(retry), `briefing.prev_week_missing`, `briefing.validated`(attempt·problems), `briefing.failed`(reason), `briefing.pending`, `briefing.notify_failed`, `briefing.decided`, `briefing.resume_retry`, `briefing.send_skipped`(이미 다른 실행이 보냄), `briefing.sent`(chars·delivery_id), `briefing.send_failed`
+  - KOBIS 원본: `kobis.weekly_raw`(브리핑용 주간 원본 조회)
   - MCP 클라이언트(`mcp_client.py`): `mcp.session_open`, `mcp.session_error`(error=타입), `mcp.reconnect`(서버 재시작 등으로 호출이 실패해 새 세션으로 다시 부름)
   - MCP 서버(`movie_mcp/server.py`): `mcp.start`(transport). 도구 이벤트(kobis·web·imdb·vectorstore)는 그 프로세스에서 같은 이름으로 찍힌다
   - KOBIS: `kobis.request`, `kobis.success`, `kobis.detail_resolve`(query/candidates/movie_cd/movie_nm), `kobis.movie_not_found`(stage=list|info), `kobis.too_recent`(호출 전 차단), `kobis.empty_result`, `kobis.no_api_key`, `kobis.timeout`, `kobis.http_error`, `kobis.network_error`, `kobis.parse_error`

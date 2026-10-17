@@ -11,6 +11,7 @@
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 from typing import Annotated
@@ -96,6 +97,18 @@ async def kobis_search(
         query=query, open_start_dt=open_start_dt, open_end_dt=open_end_dt, search_type=search_type
     )
     return await anyio.to_thread.run_sync(lambda: kobis.kobis_search(**args.model_dump()))
+
+
+@mcp.resource(
+    "kobis://weekly/{target_dt}",
+    name="kobis_weekly",
+    description="KOBIS 주간(월~일) 박스오피스 원본 JSON. target_dt는 그 주에 속한 YYYYMMDD. 브리핑용",
+    mime_type="application/json",
+)
+async def kobis_weekly(target_dt: str) -> str:
+    # 도구가 아니라 리소스다. 도구로 만들면 에이전트(LLM)의 도구 목록에도 올라가 챗봇의 도구 선택과 평가가 바뀐다.
+    raw = await anyio.to_thread.run_sync(kobis.fetch_weekly_raw, target_dt)
+    return json.dumps(raw, ensure_ascii=False)
 
 
 @mcp.resource("imdb://schema", name="imdb_schema", description="imdb_sql이 조회하는 SQLite 테이블 스키마")
