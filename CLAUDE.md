@@ -114,6 +114,7 @@ ratelimit.py      ← 순수 함수: 레이트리밋 키(방문자 IP) 판정. �
 imdb_data.py      ← 순수 함수: IMDB CSV → 영화별 검색 문서, 인덱스 지문, 읽기 전용 SQL 실행. 외부 의존 없음
 movie_tools/      ← 도구 4개의 구현과 이름·설명 상수(imdb·kobis·web). 로컬 도구와 MCP 서버가 함께 쓴다.
                     벡터스토어는 처음 필요할 때 만든다(imdb.load_vectorstore)
+mcp_client.py     ← MCP 세션 하나를 붙잡아 두고 끊기면 다시 연결(server.py가 MCP_URL일 때). 테스트는 tests/mcp(structlog 필요)
 movie_mcp/        ← MCP 서버(FastMCP). movie_tools를 MCP 도구로 등록만 한다. `mcp/`로 이름 짓지 말 것(SDK를 가린다)
 agent.py          ← LLM, SYSTEM_PROMPT, local_tools(), build_agent() 팩토리
 imdb_rag.py       ← CLI 루프 (sync SqliteSaver)
@@ -122,7 +123,7 @@ scripts/gen_lock.py ← requirements.in → requirements.txt 락 생성
 scripts/check_docs.py ← 문서의 숫자·로그 이벤트·제어 문자·참조 경로를 코드와 대조 (CI에서 실행)
 scripts/trace.py    ← 질문 하나를 실행하며 도구 호출 인자·결과·토큰을 추적 (진단용, 과금)
 tests/unit/       ← pytest 단위 테스트 (kobis_format, sources, imdb_data + 골든셋 근거 검사)
-tests/mcp/        ← MCP 서버를 메모리 안에서 띄우는 테스트 (도구 정의 동일성·입력 검증). mcp·langchain 필요
+tests/mcp/        ← MCP 서버를 메모리 안에서 띄우는 테스트(도구 정의 동일성·입력 검증) + mcp_client 재연결. 전체 의존성 필요
 tests/evals/      ← 골든 데이터셋 + LLM-as-judge 평가 러너
 ```
 

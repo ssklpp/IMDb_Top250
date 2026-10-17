@@ -56,13 +56,19 @@ async def lifespan(app: FastAPI):
     await saver.setup()
     log.info("startup.checkpointer_ready", db=CHECKPOINT_DB_PATH)
 
+    mcp_session = None
     if MCP_URL:
         from langchain_mcp_adapters.client import MultiServerMCPClient
+        from langchain_mcp_adapters.tools import load_mcp_tools
 
-        # 세션을 붙잡아 두지 않는다. get_tools()가 만든 도구는 호출마다 새 세션을 열어서
-        # MCP 서버가 재시작돼도 다음 호출부터 다시 붙는다.
+        from mcp_client import PersistentMcpSession
+
+        # 세션 하나를 붙잡아 두고 모든 도구 호출이 같이 쓴다. 어댑터 기본(get_tools)은 호출마다 세션을
+        # 새로 열어 도구당 약 280ms가 더 걸렸다(B-013). 서버가 재시작되면 PersistentMcpSession이 다시 붙는다.
         client = MultiServerMCPClient({"movie": {"transport": "streamable_http", "url": MCP_URL}})
-        tools = await client.get_tools()
+        mcp_session = PersistentMcpSession(client, "movie")
+        await mcp_session.start()
+        tools = await load_mcp_tools(mcp_session, server_name="movie")
         log.info("startup.mcp_tools", url=MCP_URL, tools=sorted(t.name for t in tools))
     else:
         tools = None  # build_agent가 local_tools()로 벡터스토어까지 불러온다
@@ -71,6 +77,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if mcp_session is not None:
+            await mcp_session.close()
         await conn.close()
         log.info("shutdown.checkpointer_closed")
 

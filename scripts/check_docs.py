@@ -84,7 +84,7 @@ def ci_import_count() -> int:
 
 def log_events_in_code() -> set[str]:
     # 도구 구현은 movie_tools/, MCP 서버는 movie_mcp/에 있다(2단계에서 agent.py에서 옮김).
-    files = ["agent.py", "server.py", "imdb_rag.py"]
+    files = ["agent.py", "server.py", "imdb_rag.py", "mcp_client.py"]
     files += [str(p.relative_to(ROOT)) for d in ("movie_tools", "movie_mcp") for p in sorted((ROOT / d).glob("*.py"))]
     code = "".join(read(f) for f in files)
     # 이벤트 이름이 다음 줄에 오는 경우(log.info(\n    "kobis.request", ...))도 잡도록 \s*

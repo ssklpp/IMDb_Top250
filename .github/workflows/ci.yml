@@ -39,7 +39,7 @@ jobs:
         run: >
           python -m compileall -q
           agent.py server.py logging_config.py imdb_rag.py
-          kobis_format.py sources.py imdb_data.py ratelimit.py movie_tools movie_mcp scripts tests
+          kobis_format.py sources.py imdb_data.py ratelimit.py mcp_client.py movie_tools movie_mcp scripts tests
 
       - name: 단위 테스트
         run: pytest tests/unit/ -q
