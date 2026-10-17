@@ -11,6 +11,7 @@
 
 | 번호 | 날짜 | 영역 | 문제 | 상태 |
 |---|---|---|---|---|
+| [B-015](#b-015) | 2026-10-17 | CI | 새 단위 테스트가 CI에서만 import 실패 | 해결 |
 | [B-014](#b-014) | 2026-10-17 | 문서 | README가 가리키는 `web/.env.example`이 저장소에 없음 | 해결 |
 | [B-013](#b-013) | 2026-10-16 | MCP | MCP 도구 호출마다 약 280ms가 더 걸림 | 해결 |
 | [B-012](#b-012) | 2026-10-16 | MCP | MCP 결과 형태가 달라 출처가 사라질 뻔함 | 해결 |
@@ -27,6 +28,16 @@
 | [B-001](#b-001) | 2026-10-01 | 데이터 | 잘린 PDF 때문에 정답이 코퍼스에 없었음 | 해결 |
 
 ---
+
+## B-015
+**새 단위 테스트가 CI에서만 import 실패** · CI · 해결 (B-013 PR 안에서)
+
+- **증상**: B-013 PR에서 `tests/unit/test_mcp_client.py`가 로컬은 통과, CI `python` 잡은 `ModuleNotFoundError: structlog`.
+- **원인**: `tests/unit`은 표준 라이브러리만 쓰는 순수 모듈을 위한 곳이라 CI가 pytest만 설치한다. `mcp_client.py`는
+  `logging_config`(structlog)를 import한다. 로컬 venv에는 모든 패키지가 있어서 드러나지 않았다.
+- **수정**: 테스트를 `tests/mcp/`(전체 의존성을 설치하는 `deps` 잡에서 실행)로 옮겼다.
+- **재발 방지**: `tests/unit`에 테스트를 추가할 때는 대상 모듈이 표준 라이브러리만 import하는지 본다. 로컬에서 확인하려면
+  pytest만 깐 깨끗한 venv로 돌려야 한다 — 이번엔 CI가 병합 전에 잡았다.
 
 ## B-014
 **README가 가리키는 `web/.env.example`이 저장소에 없음** · 문서 · 해결 (B-009 PR)
@@ -53,7 +64,7 @@
 - **결과**: `imdb_sql` 281ms → 12ms, `imdb_search` 436ms → 169ms(로컬 3ms·156ms와 거의 같음).
   MCP 서버를 재시작해도 다음 호출이 자동으로 다시 붙는다 — 스크립트로 서버를 껐다 켜고, compose에서 `restart mcp` 후
   웹 질문 2개(imdb_sql·kobis_search)가 출처와 함께 정상(로그 `mcp.reconnect` 1번).
-- **재발 방지**: `tests/unit/test_mcp_client.py`(가짜 세션) — 세션 하나 공유, 끊기면 한 번 재시도, 두 번째도 실패하면 예외,
+- **재발 방지**: `tests/mcp/test_mcp_client.py`(가짜 세션) — 세션 하나 공유, 끊기면 한 번 재시도, 두 번째도 실패하면 예외,
   동시에 실패해도 재연결은 한 번. `rules/tools.md` "지연과 세션"에 쓰기 도구를 추가하면 재시도를 다시 볼 것을 적었다.
 
 ## B-012

@@ -1,14 +1,21 @@
-"""mcp_client.PersistentMcpSession 단위 테스트. 가짜 세션으로 재연결만 본다(네트워크·mcp 패키지 없음).
+"""mcp_client.PersistentMcpSession 테스트. 가짜 세션으로 재연결만 본다(네트워크 없음).
+
+tests/unit이 아니라 여기 있는 이유: mcp_client가 logging_config(structlog)를 import해서, pytest만 설치하는
+CI python 잡에서는 import가 실패한다(B-015). 전체 의존성이 깔린 deps 잡이 tests/mcp를 돌린다.
 
 세션을 붙잡아 두면 도구 호출이 281ms → 6ms로 빨라지지만(B-013), MCP 서버가 재시작되면 그 세션은 죽는다.
 그때 요청이 실패하지 않고 새 세션으로 다시 붙는지가 이 테스트의 목적이다.
 """
 
 import asyncio
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-import mcp_client
-from mcp_client import PersistentMcpSession
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import mcp_client  # noqa: E402
+from mcp_client import PersistentMcpSession  # noqa: E402
 
 
 class _FakeSession:
