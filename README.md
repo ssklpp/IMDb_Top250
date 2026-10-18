@@ -184,7 +184,23 @@ CORS_ORIGINS=http://localhost:3000
 # 로깅 (옵션)
 LOG_LEVEL=INFO          # DEBUG/INFO/WARNING/ERROR
 LOG_FORMAT=json         # json(프로덕션) / console(개발용 컬러 출력)
+
+# 배포: 방문자별 레이트리밋용 공유 비밀값 (Railway·Vercel에 같은 값)
+PROXY_SECRET=
+
+# 선택 — 대화 DB 경로 (기본 vectorstore/checkpoints.sqlite)
+CHECKPOINT_DB_PATH=
+
+# 선택 — 주간 브리핑 (Postgres가 있을 때만 켜진다. compose는 DATABASE_URL·MCP_URL을 자동으로 넣는다)
+ADMIN_TOKEN=
+DATABASE_URL=
+DISCORD_WEBHOOK_URL=
+DISCORD_REVIEW_WEBHOOK_URL=
+ADMIN_URL=http://localhost:3000/admin/briefings
+BRIEFING_APPROVAL_TTL_HOURS=48
 ```
+
+변수마다 누가 쓰는지와 없을 때의 동작은 `SPEC.md` §4에 있습니다.
 
 - Tavily API 키 발급: [app.tavily.com](https://app.tavily.com) (무료 플랜: 월 1,000회)
 - KOBIS API 키 발급: [kobis.or.kr](https://www.kobis.or.kr) → 마이페이지 → 오픈API → 키 발급/관리 (무료, 1,000 요청/일)

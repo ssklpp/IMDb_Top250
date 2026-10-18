@@ -11,6 +11,7 @@
 
 | 번호 | 날짜 | 영역 | 문제 | 상태 |
 |---|---|---|---|---|
+| [B-021](#b-021) | 2026-10-18 | 문서 | README 환경 설정에 변수 9개가 없고, 보강 계획 상태가 "구현 전"으로 남음 | 해결 |
 | [B-020](#b-020) | 2026-10-17 | 로깅 | KOBIS 검색어(영화 제목)가 로그에 원문으로 남음 | 해결 |
 | [B-019](#b-019) | 2026-10-17 | 자동화 | n8n CLI 수동 실행이 서버와 포트 충돌 | 해결 |
 | [B-018](#b-018) | 2026-10-17 | 브리핑 | 모델이 주간 집계를 '주말'이라고 씀 | 해결 |
@@ -33,6 +34,17 @@
 | [B-001](#b-001) | 2026-10-01 | 데이터 | 잘린 PDF 때문에 정답이 코퍼스에 없었음 | 해결 |
 
 ---
+
+## B-021
+**README 환경 설정에 변수 9개가 없고, 보강 계획 상태가 "구현 전"으로 남음** · 문서 · 해결 (2026-10-18)
+
+- **증상**: CLAUDE.md는 "`.env` 항목은 README가 단일 출처"라고 하는데, README "환경 설정"에 `PROXY_SECRET`·`ADMIN_TOKEN`·
+  `DATABASE_URL`·`DISCORD_WEBHOOK_URL`·`DISCORD_REVIEW_WEBHOOK_URL`·`ADMIN_URL`·`BRIEFING_APPROVAL_TTL_HOURS`·`CHECKPOINT_DB_PATH`
+  (`.env.example`에는 있음)와 `MCP_URL`(compose가 넣음)이 없었다. `docs/roadmap.md` 첫 줄은 모든 단계가 끝난 뒤에도 "상태: 계획 (구현 전)"이었다.
+- **언제 알았나**: `SPEC.md`를 쓰면서 환경 변수 표를 `.env.example`·`docker-compose.yml`과 대조하다 발견했다.
+- **원인**: 3·4단계 PR이 `.env.example`과 compose는 고쳤지만 README 환경 설정은 건드리지 않았다. `check_docs.py`는 숫자·로그 이벤트만 보고 변수 목록은 보지 않는다.
+- **수정**: README 환경 설정에 빠진 변수를 넣고(`MCP_URL`은 compose 전용이라 설명에), roadmap 상태 줄을 완료로 바꿨다. 변수별 쓰는 곳·없을 때 동작은 `SPEC.md` §4.
+- **재발 방지**: 환경 변수를 추가하는 PR은 `.env.example`·README·`SPEC.md` §4를 함께 고친다. 자동 검사는 아직 없다(필요하면 `check_docs.py`에 `.env.example` 대조를 추가).
 
 ## B-020
 **KOBIS 검색어(영화 제목)가 로그에 원문으로 남음** · 로깅 · 해결 (2026-10-17)

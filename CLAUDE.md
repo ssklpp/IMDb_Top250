@@ -18,6 +18,7 @@ IMDB Top 250 영화 목록(`imdb_top250.csv`)을 기반으로 한 AI 영화 전�
 | CI 잡을 그렇게 나눈 이유, 패키지 추가 절차, 배포 주의사항, Docker 구성 | `rules/ci-deps.md` |
 | 프론트엔드(`web/`) 레이아웃·모바일·프록시 에러 | `web/AGENTS.md` |
 | 평가 러너와 골든셋 항목 추가 | `tests/evals/README.md` |
+| 기능 범위, 데이터 모델(`briefing_runs` 포함), 도구·그래프·API 명세, 평가 체계, 진행 단계 이력 | `SPEC.md` |
 | 기술 스택 목록, 환경변수 전체, 사람이 읽는 프로젝트 소개 | `README.md` |
 | 오류·버그·문제점을 발견했거나 고쳤을 때 (기록 필수) | `docs/bug-log.md` |
 
@@ -295,6 +296,7 @@ LLM은 오늘 날짜를 모른다. 알려주지 않으면 "지난 주"를 자기
 | 레이트리밋 키 헤더(`X-Client-IP`·`X-Proxy-Secret`) | `route.ts`의 `clientIpHeaders()`와 `ratelimit.py`, 비밀값은 Vercel·Railway의 `PROXY_SECRET`에 **같은 값** | 값이 어긋나면 웹 화면의 모든 질문이 403, 헤더 이름이 어긋나면 에러 없이 Vercel 주소로 묶임 | `rules/server.md` |
 | 새 패키지 폴더 | 할 일 없음 — `docker/api.Dockerfile`은 `COPY . .`, 뺄 것만 `api.Dockerfile.dockerignore`에. **이미지에 넣으면 안 되는 폴더를 만들면 거기에 추가** | `.env`·문서가 이미지에 들어감 | `rules/ci-deps.md` |
 | `MAX_QUESTION_CHARS`(2000) | `server.py`와 `page.tsx` 양쪽 | 입력창과 서버 제한이 어긋남 | `rules/server.md` |
+| 환경 변수 추가 | `.env.example`, README "환경 설정", `SPEC.md` §4 (compose에서 쓰면 `docker-compose.yml`도) | 문서만 보고 설정한 사람이 기능이 왜 꺼졌는지 모름(B-021) | `SPEC.md` |
 | `sources.format_web_results()` | `sources._web_sources()` | 출처 칩만 사라짐 | `rules/server.md` |
 | 새 `tool_error` 코드 | `SYSTEM_PROMPT`의 `## 도구 에러 처리` | LLM이 대처 방법을 모름 | `rules/tools.md` |
 | `imdb_tool`의 `response_format` | 되돌리지 말 것(`content_and_artifact`) | IMDB 출처 칩이 사라짐 | `rules/server.md` |
